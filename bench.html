@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pose Model Benchmark</title>
+<style>
+  body { font: 13px/1.4 ui-monospace, Menlo, monospace; background: #111; color: #ddd; margin: 16px; }
+  table { border-collapse: collapse; margin: 12px 0; }
+  td, th { border: 1px solid #333; padding: 4px 8px; text-align: right; }
+  #imgs { display: flex; flex-wrap: wrap; gap: 8px; }
+  canvas { max-width: 460px; height: auto; }
+</style>
+</head>
+<body>
+<h3>PoseLandmarker benchmark (VIDEO mode, repeated frames)</h3>
+<div id="status">loading…</div>
+<table id="t"><tr><th>model</th><th>delegate</th><th>init ms</th><th>median ms</th><th>p90 ms</th><th>~fps</th></tr></table>
+<div id="imgs"></div>
+<script type="module">
+import { FilesetResolver, PoseLandmarker, DrawingUtils } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.1/vision_bundle.mjs";
+
+const params = new URLSearchParams(location.search);
+const MODELS = (params.get("models") || "lite,full,heavy").split(",");
+const DELEGATES = (params.get("delegates") || "GPU,CPU").split(",");
+const N = +(params.get("n") || 40);
+const IMAGES = ["front-man", "front-hunched", "front-headdown", "side-man"];
+const modelUrl = m => `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_${m}/float16/latest/pose_landmarker_${m}.task`;
+const status = document.getElementById("status");
+const table = document.getElementById("t");
+
+const load = src => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+const imgs = await Promise.all(IMAGES.map(n => load(`test-images/${n}.jpg`)));
+const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.1/wasm");
+
+window.bench = [];
+window.poses = {};
+let ts = 0;
+for (const model of MODELS) {
+  for (const delegate of DELEGATES) {
+    status.textContent = `running ${model}/${delegate}…`;
+    const t0 = performance.now();
+    let lm;
+    try {
+      lm = await PoseLandmarker.createFromOptions(vision, {
+        baseOptions: { modelAssetPath: modelUrl(model), delegate },
+        runningMode: "VIDEO", numPoses: 1,
+      });
+    } catch (e) { window.bench.push({ model, delegate, error: String(e) }); continue; }
+    const init = performance.now() - t0;
+    // Per-image landmarks, then a timed loop on the frontal image (tracking path, like a live webcam).
+    for (const [k, img] of imgs.entries()) {
+      for (let w = 0; w < 5; w++) lm.detectForVideo(img, ts += 33);
+      const r = lm.detectForVideo(img, ts += 33);
+      window.poses[`${model}/${delegate}/${IMAGES[k]}`] = { lm: r.landmarks[0] ?? null, world: r.worldLandmarks[0] ?? null };
+    }
+    const times = [];
+    for (let i = 0; i < N; i++) {
+      const s = performance.now();
+      lm.detectForVideo(imgs[0], ts += 33);
+      times.push(performance.now() - s);
+    }
+    times.sort((a, b) => a - b);
+    const med = times[Math.floor(N / 2)], p90 = times[Math.floor(N * 0.9)];
+    const row = { model, delegate, init: Math.round(init), med: +med.toFixed(1), p90: +p90.toFixed(1), fps: Math.round(1000 / med) };
+    window.bench.push(row);
+    table.insertAdjacentHTML("beforeend", `<tr><td>${model}</td><td>${delegate}</td><td>${row.init}</td><td>${row.med}</td><td>${row.p90}</td><td>${row.fps}</td></tr>`);
+    lm.close();
+  }
+}
+
+// Draw the heavy (or last) model's landmarks over each image.
+const key = MODELS.at(-1) + "/" + DELEGATES[0];
+for (const [k, img] of imgs.entries()) {
+  const c = document.createElement("canvas"); c.width = img.width; c.height = img.height;
+  const ctx = c.getContext("2d"); ctx.drawImage(img, 0, 0);
+  const p = window.poses[`${key}/${IMAGES[k]}`];
+  if (p?.lm) {
+    const du = new DrawingUtils(ctx);
+    du.drawConnectors(p.lm, PoseLandmarker.POSE_CONNECTIONS, { color: "#0f0", lineWidth: 2 });
+    du.drawLandmarks(p.lm, { radius: l => 2 + 4 * (l.visibility ?? 0), color: "#f0f", fillColor: "#f0f" });
+  }
+  document.getElementById("imgs").appendChild(c);
+}
+status.textContent = "done";
+window.benchDone = true;
+</script>
+</body>
+</html>
