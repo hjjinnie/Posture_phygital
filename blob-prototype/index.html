@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jello Blob Prototype</title>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+} }
+</script>
+<style>
+  :root { --bg: #12171c; --panel: #1a2128; --line: #2a333c; --text: #dde3e8; --dim: #8b97a3; --accent: #5fd6b4; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 -apple-system, system-ui, sans-serif; }
+  header { padding: 14px 18px 6px; }
+  h1 { font-size: 17px; margin: 0 0 2px; font-weight: 600; }
+  h2 { font-size: 14px; margin: 0 0 10px; font-weight: 600; }
+  p { margin: 0; color: var(--dim); }
+  .live { display: grid; grid-template-columns: 1fr 1fr 300px; gap: 10px; padding: 8px 18px 18px; height: min(62vh, 620px); min-height: 380px; }
+  .view { position: relative; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; min-height: 0; }
+  .stage { position: absolute; inset: 0; }
+  .stage canvas { display: block; }
+  .label { position: absolute; top: 10px; left: 12px; z-index: 1; font-weight: 600; pointer-events: none; text-shadow: 0 1px 3px #000; }
+  .label small { display: block; font-weight: 400; color: var(--dim); }
+  .controls { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .presets { display: flex; flex-wrap: wrap; gap: 5px; }
+  button { background: #26303a; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font: inherit; font-size: 12px; cursor: pointer; }
+  button.on { border-color: var(--accent); color: #fff; background: #24443b; }
+  #note { min-height: 3.6em; }
+  .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -2px; margin-right: 5px; border: 1px solid #0006; }
+  .slider { display: grid; grid-template-columns: 82px 1fr 34px; gap: 6px; align-items: center; font-size: 12px; color: var(--dim); }
+  .slider span { text-align: right; font-variant-numeric: tabular-nums; }
+  .slider input { width: 100%; }
+  .foot { color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+  label.check { display: flex; gap: 6px; align-items: center; color: var(--dim); }
+  .gallery-wrap { padding: 0 18px 30px; }
+  #gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; cursor: pointer; }
+  .card:hover { border-color: #3d4a56; }
+  .card .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 8px 0 6px; }
+  .card img { width: 100%; aspect-ratio: 9/10; object-fit: cover; border-radius: 6px; display: block; }
+  .card .t { font-weight: 600; }
+  .card .cap { font-size: 11px; color: var(--dim); display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  #offscreen { position: fixed; left: -10000px; top: 0; }
+  #offscreen > div { width: 360px; height: 400px; }
+  @media (max-width: 900px) {
+    .live { grid-template-columns: 1fr 1fr; height: auto; }
+    .view { height: 46vh; }
+    .controls { grid-column: 1 / -1; }
+  }
+  @media (max-width: 560px) { .live { grid-template-columns: 1fr; padding: 8px 16px 16px; } .gallery-wrap, header { padding-left: 16px; padding-right: 16px; } #gallery { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Jello blob prototype</h1>
+  <p>The same posture signals drive both. Pick a state or drag the sliders to watch it change; drag either view to orbit.</p>
+</header>
+<section class="live">
+  <div class="view"><div class="label">Flower <small>current design</small></div><div id="flowerStage" class="stage"></div></div>
+  <div class="view"><div class="label">Jello blob <small id="blobInfo">&nbsp;</small></div><div id="blobStage" class="stage"></div></div>
+  <aside class="controls">
+    <div class="presets" id="presets"></div>
+    <label class="check"><input type="checkbox" id="tour"> Tour through states every 4 s</label>
+    <div id="note"></div>
+    <div id="sliders" style="display:grid; gap:5px"></div>
+    <label class="check"><input type="checkbox" id="pauseFlower"> Pause flower (to measure blob alone)</label>
+    <div class="foot" id="foot"></div>
+  </aside>
+</section>
+<section class="gallery-wrap">
+  <h2>All states, side by side</h2>
+  <div id="gallery"><p>Rendering snapshots…</p></div>
+</section>
+<div id="offscreen"><div id="offFlower"></div><div id="offBlob"></div></div>
+<script type="module" src="main.js"></script>
+</body>
+</html>

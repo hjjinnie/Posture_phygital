@@ -1,0 +1,60 @@
+<!doctype html>
+<!-- Renders the README state grids: docs/shots.html?visual=flower|blob. See "README images" in README.md. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>README images</title>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+} }
+</script>
+<style>
+  html, body { margin: 0; background: #12171c; }
+  #out { display: block; }
+  #stage { position: fixed; left: 0; top: 0; width: 400px; height: 340px; visibility: hidden; }
+</style>
+</head>
+<body>
+<canvas id="out"></canvas>
+<div id="stage"></div>
+<script type="module">
+import { VISUALS } from "../src/visuals.js";
+
+const BASE = { trunk: 0, lateral: 0, head: 0, headRoll: 0, shoulderTilt: 0, protraction: 0, elevL: 0, elevR: 0, wellbeing: 0.92, confidence: 1 };
+const STATES = [
+  ["Upright", {}],
+  ["Slumped", { trunk: 0.9, head: 0.25 }],
+  ["Forward head", { head: 0.9, trunk: 0.15 }],
+  ["Leaning right", { lateral: 0.85, shoulderTilt: 9 }],
+  ["Shoulders shrugged", { elevL: 0.9, elevR: 0.9 }],
+  ["Poor posture for minutes", { trunk: 0.6, head: 0.5, protraction: 0.45, wellbeing: 0.1 }],
+];
+const CW = 400, CH = 340, COLS = 3, SS = 2;   // cell size, columns, supersampling
+
+const name = new URLSearchParams(location.search).get("visual") || "flower";
+const Visual = await VISUALS[name].load();
+const v = new Visual(document.getElementById("stage"), { pixelRatio: SS, maxPixels: Infinity });
+v.renderer.setPixelRatio(SS); v.resize();
+
+const out = document.getElementById("out");
+out.width = CW * COLS; out.height = CH * Math.ceil(STATES.length / COLS);
+const g = out.getContext("2d");
+g.imageSmoothingQuality = "high";
+g.font = "500 15px -apple-system, system-ui, sans-serif";
+g.fillStyle = "#dde3e8";
+
+for (const [i, [label, s]] of STATES.entries()) {
+  v.setTarget({ ...BASE, ...s });
+  if (v.settle) v.settle(2);
+  else { for (const sp of Object.values(v.s)) { sp.x = sp.target; sp.v = 0; } v.frame(1 / 60, 2); }
+  const x = (i % COLS) * CW, y = Math.floor(i / COLS) * CH;
+  g.drawImage(v.renderer.domElement, x, y, CW, CH);
+  g.fillText(label, x + 12, y + 24);
+}
+v.dispose();
+document.title = "done";
+</script>
+</body>
+</html>

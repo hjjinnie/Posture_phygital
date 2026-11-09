@@ -6,6 +6,7 @@
 //   petal openness + colour = slow wellbeing (sustained posture, not the last second)
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { renderOnBlack, disposeRenderer } from "./visuals.js";
 
 const lerp = THREE.MathUtils.lerp;
 const smooth = (a, b, x) => THREE.MathUtils.smoothstep(x, a, b);
@@ -60,7 +61,7 @@ export class Flower {
     const r = this.renderer = new THREE.WebGLRenderer({ antialias: true });
     r.setPixelRatio(Math.min(devicePixelRatio, 1.5));   // DPR 2 doubled frame cost (16 vs 7 ms) on an Intel MBP
     r.shadowMap.enabled = true;
-    r.shadowMap.type = THREE.PCFSoftShadowMap;
+    r.shadowMap.type = THREE.PCFShadowMap;
     r.toneMapping = THREE.ACESFilmicToneMapping;
     container.appendChild(r.domElement);
 
@@ -90,6 +91,7 @@ export class Flower {
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     scene.add(ground);
+    this.ground = ground;
 
     // Pot (the seat). Everything else hangs off it so a pot tilt carries the plant.
     this.pot = new THREE.Group();
@@ -177,12 +179,29 @@ export class Flower {
     };
     this._tmp = { v: new THREE.Vector3(), q: new THREE.Quaternion(), up: new THREE.Vector3(0, 1, 0) };
 
-    addEventListener("resize", () => this.resize());
+    // 320x240 LCD view: framed so the flower stays in shot even fully slumped or leaning.
+    this.lcdCamera = new THREE.PerspectiveCamera(42, 320 / 240, 0.1, 100);
+    this.lcdCamera.position.set(3.8, 2.9, 3.8);
+    this.lcdCamera.lookAt(0, 1.8, 0);
+
+    this._onResize = () => this.resize();
+    addEventListener("resize", this._onResize);
     this.resize();
+  }
+
+  renderLcd(renderer) {
+    renderOnBlack(renderer, this.scene, this.lcdCamera, this.ground);
+  }
+
+  dispose() {
+    removeEventListener("resize", this._onResize);
+    this.controls.dispose();
+    disposeRenderer(this.renderer);
   }
 
   resize() {
     const { clientWidth: w, clientHeight: h } = this.container;
+    if (!w || !h) return;
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
@@ -201,6 +220,17 @@ export class Flower {
   }
 
   frame(dt, time) {
+    this.step(dt, time);
+    this.render();
+  }
+
+  render() {
+    this.controls.update();
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  // Advances springs and rebuilds the plant without drawing (also used while the window is hidden).
+  step(dt, time) {
     dt = Math.min(dt, 1 / 30);
     const v = Object.fromEntries(Object.entries(this.s).map(([k, sp]) => [k, sp.step(dt)]));
     const wilt = 1 - smooth(0.25, 0.78, v.health);
@@ -263,8 +293,6 @@ export class Flower {
     // A little self-illumination so petals read as petals even when seen edge-on or from below.
     for (const m of [this.petalOuterMat, this.petalInnerMat]) m.emissive.copy(m.color).multiplyScalar(0.22);
 
-    this.controls.update();
-    this.renderer.render(this.scene, this.camera);
     this.values = v;
   }
 

@@ -1,6 +1,7 @@
 import { PoseEngine, drawSkeleton } from "./pose.js";
 import { extractFeatures, FeatureFilter, scorePosture, Wellbeing, median } from "./posture.js";
-import { Flower } from "./flower.js";
+import { VISUALS } from "./visuals.js";
+import { LcdLink } from "./lcd.js";
 
 const q = new URLSearchParams(location.search);
 const INFER_HZ = +(q.get("hz") || 15);          // posture changes over seconds; 15 Hz leaves room for 60 fps rendering
@@ -10,13 +11,27 @@ const WARMUP_MS = 2000;
 
 const $ = id => document.getElementById(id);
 const video = $("video"), overlay = $("overlay"), octx = overlay.getContext("2d");
-const flower = new Flower($("stage"));
 const engine = new PoseEngine();
 const wellbeing = new Wellbeing(+(q.get("tau") || 45));
+const lcd = new LcdLink({ fps: +(q.get("lcdfps") || 20) });
 let filter = new FeatureFilter();
 
-const app = window.app = { flower, engine, source: null, srcName: null, baseline: null, features: null, state: null, calib: null, inferMs: 0 };
+const app = window.app = { visual: null, engine, lcd, source: null, srcName: null, baseline: null, features: null, state: null, calib: null, inferMs: 0 };
 const NEUTRAL = { trunk: 0, lateral: 0, head: 0, headRoll: 0, shoulderTilt: 0, protraction: 0, elevL: 0, elevR: 0 };
+
+// ---- visuals (only the selected one exists; switching frees the other's GPU context) ----
+let visual = null, target = { ...NEUTRAL, wellbeing: wellbeing.value, confidence: 0 };
+function setTarget(s) { target = s; visual?.setTarget(s); }
+$("visual").innerHTML = Object.entries(VISUALS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join("");
+async function setVisual(name) {
+  if (!VISUALS[name]) name = "flower";
+  const Visual = await VISUALS[name].load();
+  visual?.dispose();
+  visual = app.visual = lcd.visual = new Visual($("stage"));
+  visual.setTarget(target);
+  $("visual").value = name;
+  try { localStorage.setItem("posture-flower.visual", name); } catch {}
+}
 
 const storeKey = () => `posture-flower.baseline.${engine.model}`;
 const saveBaseline = () => { if (app.srcName === "webcam") try { localStorage.setItem(storeKey(), JSON.stringify(app.baseline)); } catch {} };
@@ -121,7 +136,7 @@ function infer() {
 
   octx.clearRect(0, 0, overlay.width, overlay.height);
   if (src !== video) octx.drawImage(src, 0, 0);
-  if (!r) { app.state = null; app.warmUntil = now + WARMUP_MS; flower.setTarget({ ...NEUTRAL, wellbeing: wellbeing.value, confidence: 0 }); renderMetrics(null); return; }
+  if (!r) { app.state = null; app.warmUntil = now + WARMUP_MS; setTarget({ ...NEUTRAL, wellbeing: wellbeing.value, confidence: 0 }); renderMetrics(null); return; }
   drawSkeleton(octx, r.lm);
 
   const raw = extractFeatures(r.lm, r.world, overlay.width, overlay.height);
@@ -136,31 +151,65 @@ function infer() {
     }
   }
   if (!app.baseline || f.conf < 0.5) {
-    flower.setTarget({ ...NEUTRAL, wellbeing: wellbeing.value, confidence: f.conf });
+    setTarget({ ...NEUTRAL, wellbeing: wellbeing.value, confidence: f.conf });
     renderMetrics(null);
     return;
   }
   const s = app.state = scorePosture(f, app.baseline);
   wellbeing.update(s.score, dt);
-  flower.setTarget({ ...s, wellbeing: wellbeing.value, confidence: f.conf });
+  setTarget({ ...s, wellbeing: wellbeing.value, confidence: f.conf });
   renderMetrics(s);
 }
 
 function loop(now) {
   const dt = (now - lastFrame) / 1000; lastFrame = now;
   fps += (1 / Math.max(dt, 1e-3) - fps) * 0.05;
-  if (manualOn()) flower.setTarget(manual);
-  flower.frame(dt, now / 1000);
+  if (manualOn()) setTarget(manual);
+  if (visual) { visual.step(dt, now / 1000); visual.render(); }
   $("foot").textContent = `${engine.model ?? "…"} · inference ${app.inferMs.toFixed(0)} ms @ ${INFER_HZ} Hz · render ${fps.toFixed(0)} fps` +
     (app.baseline ? "" : " · not calibrated");
+  renderLcdStatus();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
-// Inference runs on a timer, not rAF, so posture tracking continues (throttled) when the window is hidden.
-setInterval(() => { if (app.source && engine.landmarker) infer(); }, 1000 / INFER_HZ);
+
+// Inference and the LCD run off a worker's timer rather than rAF or page timers, which the browser
+// pauses or slows to ~1 Hz when the window is hidden or covered (measured: rAF 1.5/s, worker 30/s).
+// Whenever rAF has stalled, the tick also advances the visual so the LCD keeps animating.
+const ticker = new Worker(URL.createObjectURL(new Blob(["setInterval(() => postMessage(0), 33)"], { type: "text/javascript" })));
+let lastTick = performance.now();
+ticker.onmessage = () => {
+  const now = performance.now();
+  if (app.source && engine.landmarker && now - lastInfer >= 1000 / INFER_HZ - 5) infer();
+  if (now - lastFrame > 100) {
+    if (manualOn()) setTarget(manual);
+    visual?.step((now - lastTick) / 1000, now / 1000);
+  }
+  lastTick = now;
+  lcd.tick(now);
+};
+
+// ---- LCD ----
+$("lcdPreview").appendChild(lcd.canvas);
+function renderLcdStatus() {
+  const s = lcd.stats;
+  $("lcdBtn").textContent = lcd.connected ? "Disconnect LCD" : "Connect LCD";
+  $("lcdStatus").textContent = !lcd.supported ? "Needs Chrome or Edge (Web Serial)"
+    : lcd.connected ? `${s.fps.toFixed(0)} fps · ${s.kb.toFixed(1)} KB/frame · board ${s.boardMs} ms` + (s.errors ? ` · ${s.errors} errors` : "")
+    : "Not connected";
+}
+$("lcdBtn").disabled = !lcd.supported;
+$("lcdBtn").onclick = async () => {
+  try { lcd.connected ? await lcd.disconnect() : await lcd.connect(); }
+  catch (e) {
+    // NotFoundError: the picker was cancelled, or this browser (e.g. an embedded preview) can't show one.
+    banner(e.name === "NotFoundError" ? "No port chosen. In Chrome or Edge, pick “USB JTAG/serial debug unit”." : `LCD: ${e.message}`, 5000);
+  }
+};
 
 // ---- wiring ----
 $("startBtn").onclick = () => setSource($("src").value);
+$("visual").onchange = e => setVisual(e.target.value);
 $("calBtn").onclick = calibrate;
 $("src").onchange = () => { if (app.source) setSource($("src").value); };
 $("model").onchange = async e => {
@@ -171,6 +220,10 @@ $("model").onchange = async e => {
   $("camMsg").textContent = "";
   if (!app.baseline && app.source) banner("New model — please recalibrate", 3000);
 };
+
+let savedVisual = null;
+try { savedVisual = localStorage.getItem("posture-flower.visual"); } catch {}
+await setVisual(q.get("visual") || savedVisual || "flower");
 
 const model = q.get("model") || "heavy";
 $("model").value = model;
