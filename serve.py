@@ -12,5 +12,5 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
 
 port = int(sys.argv[1]) if len(sys.argv) > 1 else 8785
 handler = functools.partial(NoCacheHandler, directory=os.path.dirname(os.path.abspath(__file__)))
-print(f"Posture Flower: http://localhost:{port}", flush=True)
+print(f"Posture Buddy: http://localhost:{port}", flush=True)
 http.server.ThreadingHTTPServer(("", port), handler).serve_forever()

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sets up a Raspberry Pi (Raspberry Pi OS with desktop) as the Posture Flower screen. No sudo needed:
+# Sets up a Raspberry Pi (Raspberry Pi OS with desktop) as the posture visual's screen. No sudo needed:
 #   - posture_display.py runs as a user service (port 8790), started with your login
 #   - Chromium opens the full-screen screen page when the desktop starts
 # Run on the Pi from this folder:  ./install.sh
@@ -12,7 +12,7 @@ echo "Installing the display server as a user service…"
 mkdir -p "$HOME/.config/systemd/user"
 cat > "$HOME/.config/systemd/user/posture-display.service" <<UNIT
 [Unit]
-Description=Posture Flower display server
+Description=Posture display server
 
 [Service]
 ExecStart=/usr/bin/python3 $DIR/posture_display.py
@@ -31,7 +31,7 @@ mkdir -p "$HOME/.config/autostart"
 cat > "$HOME/.config/autostart/posture-display.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
-Name=Posture Flower display
+Name=Posture display
 Exec=$DIR/kiosk.sh
 DESKTOP
 
@@ -46,7 +46,7 @@ path = sys.argv[1]
 xml = open(path).read()
 if "posture-display" not in xml:
     # Chromium gets the pointer only after it moves, so park it in a corner and hide it when the page opens.
-    rule = """    <!-- posture-display: no mouse pointer on the Posture Flower screen -->
+    rule = """    <!-- posture-display: no mouse pointer on the posture screen -->
     <windowRule identifier="chromium*">
       <action name="WarpCursor" to="output" x="-1" y="-1" />
       <action name="HideCursor" />

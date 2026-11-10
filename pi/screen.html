@@ -3,7 +3,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Posture Flower display</title>
+<title>Posture display</title>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; cursor: none; }
   canvas { display: block; width: 100vw; height: 100vh; }
@@ -25,7 +25,7 @@ function waiting() {
   g.fillStyle = "#000"; g.fillRect(0, 0, c.width, c.height);
   g.fillStyle = "#444"; g.textAlign = "center"; g.textBaseline = "middle";
   g.font = `${Math.round(c.height / 30)}px system-ui, sans-serif`;
-  g.fillText("waiting for Posture Flower", c.width / 2, c.height / 2);
+  g.fillText("loading…", c.width / 2, c.height / 2);
 }
 
 // Scale the frame to fill the screen without stretching; the frames have a black background, so bars blend in.

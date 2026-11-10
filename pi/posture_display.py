@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shows the Posture Flower visual on the Raspberry Pi's HDMI screen.
+"""Shows the posture visual on the Raspberry Pi's HDMI screen.
 
 The Mac renders each frame and sends it here as a JPEG over a WebSocket (ws://<pi>:8790/source).
 A full-screen Chromium page on the Pi (http://localhost:8790/) picks up the newest frame from

@@ -1,6 +1,6 @@
-# Posture Flower
+# Posture Buddy
 
-Real-time sitting-posture tracking from a laptop's front webcam (MediaPipe Pose Landmarker, heavy),
+Real-time sitting-posture tracking from a laptop's front webcam (MediaPipe Pose Landmarker, lite by default),
 rendered as a 3D visual (three.js) that mirrors your body: a flower or a jello blob. The same picture can stream to a
 Raspberry Pi's HDMI screen (or a small ESP32-S3 LCD).
 
@@ -27,7 +27,7 @@ Camera frames stay in the browser. The MediaPipe library does send usage metrics
 
 Pick **Flower** or **Jello blob** from the **Visual** dropdown; the external screen follows the choice, and it's remembered.
 
-URL options: `?visual=flower|blob`, `?model=heavy|full|lite`, `?hz=15` (inference rate), `?tau=45` (seconds for flower health to respond),
+URL options: `?visual=flower|blob`, `?model=lite|full|heavy` (lite is the default; heavy is more accurate but slower, and calibration is kept per model), `?hz=15` (inference rate), `?tau=45` (seconds for flower health to respond),
 `?src=front-man&autocal=1` (run on a test photo instead of the webcam),
 `?display=pi|esp32`, `?pi=10.12.194.1` (the Pi's address), `?connect=1` (connect to the Pi on load), `?dispfps=30`,
 `?mainfps=30` (this window's frame rate while streaming), `?zoom=1.5` (a fixed framing for the external screen instead of the automatic one).
@@ -76,7 +76,7 @@ Nothing needs installing on the Pi beyond Raspberry Pi OS with desktop (the serv
    user service (port 8790), opens the full-screen page when the desktop starts, and adds a labwc window rule
    (in `~/.config/labwc/rc.xml`) that parks and hides the mouse pointer when the page opens.
    ```bash
-   scp -r pi <user>@10.12.194.1:posture-flower/ && ssh <user>@10.12.194.1 posture-flower/pi/install.sh
+   scp -r pi <user>@10.12.194.1:posture-buddy/ && ssh <user>@10.12.194.1 posture-buddy/pi/install.sh
    ```
 
 **Each time:** in the app on the Mac, set **Screen** to *Raspberry Pi (HDMI)*, check the address (`10.12.194.1` over
@@ -92,7 +92,7 @@ draws each frame in 3–5 ms.
 The computer does all the tracking and 3D rendering; the board only decodes and displays.
 Each frame is a ~3–6 KB JPEG sent over the USB cable. On an ESP32-S3 N16R8 + Waveshare 2" ST7789 it runs at
 ~28 fps for the flower and ~32 fps for the blob (decode + draw 20–22 ms per frame); the page sends 20 fps. When the stream stops, the last frame stays on screen;
-at power-on the screen shows "waiting for Posture Flower" until the first frame arrives.
+at power-on the screen shows "loading..." until the first frame arrives.
 
 1. Wire the LCD: DIN→GPIO11, CLK→GPIO12, CS→GPIO10, DC→GPIO9, RST→GPIO8, VCC→3V3, GND→GND, BL→3V3.
 2. Install the **LovyanGFX** and **JPEGDEC** libraries.
@@ -118,7 +118,7 @@ The SPI clock is 80 MHz. If the image shows noise or wrong colours, set `SPI_HZ`
 | Ear–shoulder–hip stack | hips aren't visible, so inferred from head + trunk | (combined) | (combined) |
 | Side balance (weight) | shoulder-line tilt + sideways shift | stem leans, pot tips | jelly pools to one side and tips over, turns lemon |
 | Forward head | ear-above-shoulder height ÷ shoulder width shrinks; head grows relative to shoulders; 3D ear-vs-shoulder depth | top of stem nods, bloom droops; head roll tilts the bloom | top lobe swells and droops, turns amber; head roll tilts the face |
-| Shoulders protracted / raised | 3D shoulder span narrows; shoulders rise relative to ears | leaves swing forward / lift and tremble | droplets stretch out in front / drift up off the top, turns pink |
+| Shoulders protracted / raised | 3D shoulder span narrows; shoulders rise relative to ears | leaves swing forward / lift and tremble | droplets bud off and rise above it (more and faster when tenser), turns pink |
 | Sustained posture (45 s average) | — | petals open and pink → closed, brown, drooping | floating and smiling → sinks, sags, goes dull, frowns |
 
 Severities are relative to your calibration, not absolute angles; [docs/METRICS.md](docs/METRICS.md) explains each one.

@@ -1,5 +1,5 @@
-// Posture Flower LCD: shows JPEG frames streamed from the browser over USB. When the stream stops,
-// the last frame stays on screen; before the first frame it shows a small "waiting" note.
+// Posture LCD: shows JPEG frames streamed from the browser over USB. When the stream stops,
+// the last frame stays on screen; before the first frame it shows "loading...".
 //
 // Hardware: ESP32-S3 N16R8 + Waveshare 2-inch ST7789 (320x240 landscape).
 // Wiring: DIN=GPIO11, CLK=GPIO12, CS=GPIO10, DC=GPIO9, RST=GPIO8, VCC=3V3, GND=GND, BL=3V3.
@@ -138,7 +138,7 @@ void setup() {
   tft.fillScreen(TFT_BLACK);
   tft.setTextColor(0x4208);  // dim grey
   tft.setTextDatum(lgfx::middle_center);
-  tft.drawString("waiting for Posture Flower", LCD_W / 2, LCD_H / 2);
+  tft.drawString("loading...", LCD_W / 2, LCD_H / 2);
 }
 
 void loop() {

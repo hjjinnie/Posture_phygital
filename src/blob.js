@@ -40,7 +40,7 @@ const L_REST = 0, R_REST = 0.62, HOVER = 1.35;
 const BOX_MIN = new THREE.Vector3(-2.3, -0.02, -2.3), BOX_MAX = new THREE.Vector3(2.3, 3.3, 2.3);
 
 // [side (+1 = right), azimuth from the side axis toward the front, upward component,
-//  tension threshold, radius, travel beyond the surface, anchor spine node]
+//  tension threshold, radius, travel beyond the surface, anchor spine node (unused: all now rise from the top)]
 // Few, small, deliberately uneven. Each is either in or out; the gooey neck only shows while it moves.
 const DROPS = [
   [ 1,  0.35,  0.55, 0.15, 0.115, 0.38, 3],
@@ -510,13 +510,19 @@ export class JelloBlob {
     // ---- droplets: positions, gentle orbit, velocity-stretched tails ----
     const tension = Math.max(tensionSide(1), tensionSide(-1));
     for (let i = 0; i < ND; i++) {
-      const [side, az, up, , r, dist, anchor] = DROPS[i], d = this.drops[i];
+      const [side, az, up, , r, dist] = DROPS[i], d = this.drops[i];
       const det = Math.max(0, d.det.x), elev = side > 0 ? v.elevR : v.elevL;
       if (h) d.phase += h * side * (0.1 + 0.05 * (i % 3)) * smooth(0.3, 1, det) * (0.5 + tension);
       dir.set(side * Math.cos(az), up + 0.8 * elev, Math.sin(az) + 0.6 * v.protraction).normalize().applyAxisAngle(Y, d.phase);
-      const ra = rad[anchor];
+      // Droplets rise off the top rather than flying out sideways: a tall screen has room above the blob but little
+      // beside it, and anything wide makes the external screen's framing pull back (display.js). They keep a narrow
+      // orbit and lean toward their shoulder's side, so which side is tense still reads.
+      dir.x *= 0.35;
+      dir.y = 0.9 + Math.abs(dir.y);
+      dir.normalize();
+      const ra = rad[SEGS];
       d.prev.copy(d.pos);
-      d.pos.copy(N[anchor].x).addScaledVector(dir, ra * 0.45 + det * (ra * 0.6 + dist));
+      d.pos.copy(N[SEGS].x).addScaledVector(dir, ra * 0.45 + det * (ra * 0.6 + 0.75 * dist));
       d.pos.y += (0.03 + 0.01 * (i % 3)) * det * Math.sin(time * (1.3 + 0.37 * i) + i * 1.7);
       d.pos.y = Math.max(d.pos.y, r * 0.9);
       d.pos.clamp(BOX_MIN, BOX_MAX);

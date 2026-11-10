@@ -18,6 +18,15 @@ let filter = new FeatureFilter();
 const app = window.app = { visual: null, engine, display: null, source: null, srcName: null, baseline: null, features: null, state: null, calib: null, inferMs: 0 };
 const NEUTRAL = { trunk: 0, lateral: 0, head: 0, headRoll: 0, shoulderTilt: 0, protraction: 0, elevL: 0, elevR: 0 };
 
+// Saved settings: store(key) reads, store(key, value) writes. Settings saved before the rename to Posture Buddy
+// (under "posture-flower.") are still read, so calibration and choices carry over.
+function store(k, v) {
+  try {
+    if (v !== undefined) return localStorage.setItem(`posture-buddy.${k}`, v), v;
+    return localStorage.getItem(`posture-buddy.${k}`) ?? localStorage.getItem(`posture-flower.${k}`);
+  } catch { return v ?? null; }
+}
+
 // ---- visuals (only the selected one exists; switching frees the other's GPU context) ----
 let visual = null, target = { ...NEUTRAL, wellbeing: wellbeing.value, confidence: 0 };
 function setTarget(s) { target = s; visual?.setTarget(s); }
@@ -30,12 +39,12 @@ async function setVisual(name) {
   if (display) display.visual = visual;
   visual.setTarget(target);
   $("visual").value = name;
-  try { localStorage.setItem("posture-flower.visual", name); } catch {}
+  store("visual", name);
 }
 
-const storeKey = () => `posture-flower.baseline.${engine.model}`;
-const saveBaseline = () => { if (app.srcName === "webcam") try { localStorage.setItem(storeKey(), JSON.stringify(app.baseline)); } catch {} };
-const loadBaseline = () => { try { return JSON.parse(localStorage.getItem(storeKey())); } catch { return null; } };
+const storeKey = () => `baseline.${engine.model}`;
+const saveBaseline = () => { if (app.srcName === "webcam") store(storeKey(), JSON.stringify(app.baseline)); };
+const loadBaseline = () => { try { return JSON.parse(store(storeKey())); } catch { return null; } };
 
 // ---- metrics panel ----
 const METRICS = [
@@ -59,7 +68,7 @@ function renderMetrics(s) {
   $("health").textContent = Math.round(wellbeing.value * 100);
 }
 
-// ---- manual sliders (to design the flower without a camera) ----
+// ---- manual sliders (to design a visual without a camera) ----
 const SLIDERS = [["trunk", -1, 1], ["lateral", -1, 1], ["head", 0, 1], ["headRoll", -30, 30], ["shoulderTilt", -15, 15],
   ["protraction", 0, 1], ["elevL", 0, 1], ["elevR", 0, 1], ["wellbeing", 0, 1]];
 const manual = { ...NEUTRAL, wellbeing: 0.9, confidence: 1 };
@@ -115,7 +124,23 @@ async function calibrate() {
   }
   banner("Hold still…", 0);
   const start = Math.max(performance.now(), app.warmUntil ?? 0);
-  app.calib = { frames: [], from: start, until: start + CAL_SECONDS * 1000 };
+  app.calib = { frames: [], results: 0, people: 0, from: start, until: start + CAL_SECONDS * 1000 };
+  // Finish even if the pose model goes quiet, so "Hold still…" can never stay up.
+  clearTimeout(calTimer);
+  calTimer = setTimeout(finishCalibration, app.calib.until - performance.now() + 3000);
+}
+let calTimer;
+
+// Ends calibration: a baseline from the frames collected, or a message saying what was missing.
+function finishCalibration() {
+  const c = app.calib;
+  if (!c) return;
+  app.calib = null;
+  clearTimeout(calTimer);
+  if (c.frames.length >= 5) { app.baseline = median(c.frames); saveBaseline(); banner("Calibrated ✓"); }
+  else if (!c.results) banner("The pose model isn't running. Reload the page (Cmd+Shift+R) and try again.", 8000);
+  else if (!c.people) banner("No one in view. Get your head and shoulders in the camera, then press Calibrate.", 6000);
+  else banner("Couldn't see your ears and shoulders clearly. Try again.", 5000);
 }
 app.calibrate = calibrate;
 app.infer = () => infer();   // lets tests step the pipeline when timers are throttled
@@ -135,14 +160,21 @@ async function infer() {
   let r;
   inferring = true;
   try { r = await engine.detect(src); }
-  catch { return; }        // e.g. the model is being switched
+  catch (e) { app.inferError = e.message; return; }   // e.g. the model is being switched
   finally { inferring = false; }
   if (src !== app.source) return;
   app.inferMs = engine.ms;
+  app.inferError = null;
+  if (app.calib) { app.calib.results++; if (r) app.calib.people++; }
 
   octx.clearRect(0, 0, overlay.width, overlay.height);
   if (src !== video) octx.drawImage(src, 0, 0);
-  if (!r) { app.state = null; app.warmUntil = now + WARMUP_MS; setTarget({ ...NEUTRAL, wellbeing: wellbeing.value, confidence: 0 }); renderMetrics(null); return; }
+  if (!r) {
+    app.state = null; app.warmUntil = now + WARMUP_MS;
+    setTarget({ ...NEUTRAL, wellbeing: wellbeing.value, confidence: 0 }); renderMetrics(null);
+    if (app.calib && now > app.calib.until) finishCalibration();
+    return;
+  }
   drawSkeleton(octx, r.lm);
 
   const raw = extractFeatures(r.lm, r.world, overlay.width, overlay.height);
@@ -150,11 +182,7 @@ async function infer() {
 
   if (app.calib) {
     if (raw.conf > 0.6 && now >= app.calib.from) app.calib.frames.push(raw);
-    if (now > app.calib.until) {
-      if (app.calib.frames.length >= 5) { app.baseline = median(app.calib.frames); saveBaseline(); banner("Calibrated ✓"); }
-      else banner("Couldn't see your ears and shoulders clearly — try again");
-      app.calib = null;
-    }
+    if (now > app.calib.until) finishCalibration();
   }
   if (!app.baseline || f.conf < 0.5) {
     setTarget({ ...NEUTRAL, wellbeing: wellbeing.value, confidence: f.conf });
@@ -177,8 +205,9 @@ function loop(now) {
   fps += (1 / Math.max(dt, 1e-3) - fps) * 0.05;
   if (manualOn()) setTarget(manual);
   if (visual) { visual.step(dt, now / 1000); visual.render(); }
-  $("foot").textContent = `${engine.model ?? "…"} · inference ${app.inferMs.toFixed(0)} ms @ ${INFER_HZ} Hz · render ${fps.toFixed(0)} fps` +
-    (app.baseline ? "" : " · not calibrated");
+  const pose = !engine.ready ? "pose model loading…" : app.inferError ? `pose model error: ${app.inferError}`
+    : `${engine.model} · inference ${app.inferMs.toFixed(0)} ms @ ${INFER_HZ} Hz`;
+  $("foot").textContent = `${pose} · render ${fps.toFixed(0)} fps` + (app.baseline ? "" : " · not calibrated");
   renderDisplayStatus();
   requestAnimationFrame(loop);
 }
@@ -201,10 +230,9 @@ ticker.onmessage = () => {
 };
 
 // ---- external screen: Raspberry Pi over HDMI, or the ESP32 LCD ----
-const store = (k, v) => { try { v === undefined ? (v = localStorage.getItem(k)) : localStorage.setItem(k, v); } catch {} return v; };
 let display = null;
 $("dispTarget").innerHTML = Object.entries(TARGETS).map(([k, t]) => `<option value="${k}">${t.label}</option>`).join("");
-$("piHost").value = q.get("pi") || store("posture-flower.piHost") || "10.12.194.1";
+$("piHost").value = q.get("pi") || store("piHost") || "10.12.194.1";
 
 function setDisplay(target) {
   if (!TARGETS[target]) target = "pi";
@@ -215,9 +243,9 @@ function setDisplay(target) {
   $("dispTarget").value = target;
   $("piHost").hidden = target !== "pi";
   $("lcdBtn").disabled = !display.supported;
-  store("posture-flower.display", target);
+  store("display", target);
 }
-setDisplay(q.get("display") || store("posture-flower.display"));
+setDisplay(q.get("display") || store("display"));
 if (q.get("connect") === "1" && display.target === "pi") display.connect().catch(e => banner(e.message, 6000));  // no picker needed
 
 function renderDisplayStatus() {
@@ -228,7 +256,7 @@ function renderDisplayStatus() {
     : "Not connected";
 }
 $("dispTarget").onchange = e => setDisplay(e.target.value);
-$("piHost").onchange = e => { store("posture-flower.piHost", e.target.value.trim()); setDisplay("pi"); };
+$("piHost").onchange = e => { store("piHost", e.target.value.trim()); setDisplay("pi"); };
 $("lcdBtn").onclick = async () => {
   try {
     if (display.target === "pi") display.transport.host = $("piHost").value.trim();
@@ -254,11 +282,9 @@ $("model").onchange = async e => {
   if (!app.baseline && app.source) banner("New model — please recalibrate", 3000);
 };
 
-let savedVisual = null;
-try { savedVisual = localStorage.getItem("posture-flower.visual"); } catch {}
-await setVisual(q.get("visual") || savedVisual || "flower");
+await setVisual(q.get("visual") || store("visual") || "flower");
 
-const model = q.get("model") || "heavy";
+const model = q.get("model") || "lite";   // lite keeps up best alongside the 3D views; ?model=heavy for accuracy
 $("model").value = model;
 await engine.load(model);
 $("camMsg").textContent = "Press Start camera";

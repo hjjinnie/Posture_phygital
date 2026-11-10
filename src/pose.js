@@ -11,13 +11,23 @@ export class PoseEngine {
       this.calls.delete(data.id);
       data.error ? c?.reject(new Error(data.error)) : c?.resolve(data);
     };
+    // A crash inside the worker would otherwise leave callers waiting forever.
+    this.worker.onerror = e => {
+      for (const c of this.calls.values()) c.reject(new Error(e.message || "pose worker failed"));
+      this.calls.clear();
+    };
     this.ready = false; this.model = null; this.lastTs = 0; this.ms = 0;
   }
 
-  #call(msg, transfer) {
+  #call(msg, transfer, timeoutMs = 0) {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.calls.set(id, { resolve, reject });
+      const timer = timeoutMs && setTimeout(() => {
+        this.calls.delete(id);
+        reject(new Error("pose model didn't answer"));
+      }, timeoutMs);
+      const done = f => v => { clearTimeout(timer); f(v); };
+      this.calls.set(id, { resolve: done(resolve), reject: done(reject) });
       this.worker.postMessage({ ...msg, id }, transfer);
     });
   }
@@ -34,7 +44,7 @@ export class PoseEngine {
     const ts = Math.max(performance.now(), this.lastTs + 1); // timestamps must strictly increase
     this.lastTs = ts;
     const frame = await createImageBitmap(source);
-    const r = await this.#call({ type: "detect", frame, ts }, [frame]);
+    const r = await this.#call({ type: "detect", frame, ts }, [frame], 15000);   // ~30-150 ms normally; the first can be slow
     this.ms = r.ms;
     return r.lm ? { lm: r.lm, world: r.world } : null;
   }

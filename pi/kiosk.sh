@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Opens the Posture Flower screen page full screen on the Pi's display.
+# Opens the posture screen page full screen on the Pi's display.
 # Chromium is "chromium" on Raspberry Pi OS Trixie and "chromium-browser" on Bookworm.
 BROWSER="$(command -v chromium || command -v chromium-browser)"
 # Wait for the server (it starts at boot alongside the desktop).
