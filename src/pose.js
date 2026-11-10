@@ -1,34 +1,42 @@
-// Thin wrapper around MediaPipe PoseLandmarker (VIDEO mode, single person).
-import { FilesetResolver, PoseLandmarker, DrawingUtils } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.1/vision_bundle.mjs";
-
-const WASM = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.1/wasm";
-const modelUrl = m => `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_${m}/float16/latest/pose_landmarker_${m}.task`;
+// MediaPipe PoseLandmarker (VIDEO mode, single person), run in a worker (pose-worker.js) so the page stays smooth.
+import { PoseLandmarker, DrawingUtils } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.1/vision_bundle.mjs";
 
 export class PoseEngine {
-  constructor() { this.landmarker = null; this.model = null; this.lastTs = 0; this.ms = 0; }
-
-  async load(model = "heavy") {
-    this.vision ??= await FilesetResolver.forVisionTasks(WASM);
-    this.landmarker?.close();
-    this.landmarker = await PoseLandmarker.createFromOptions(this.vision, {
-      baseOptions: { modelAssetPath: modelUrl(model), delegate: "GPU" },
-      runningMode: "VIDEO",
-      numPoses: 1,
-      minPoseDetectionConfidence: 0.5,
-      minPosePresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-    });
-    this.model = model;
+  constructor() {
+    this.worker = new Worker(new URL("./pose-worker.js", import.meta.url));
+    this.calls = new Map();
+    this.nextId = 1;
+    this.worker.onmessage = ({ data }) => {
+      const c = this.calls.get(data.id);
+      this.calls.delete(data.id);
+      data.error ? c?.reject(new Error(data.error)) : c?.resolve(data);
+    };
+    this.ready = false; this.model = null; this.lastTs = 0; this.ms = 0;
   }
 
-  // Returns { lm, world } for the first pose, or null.
-  detect(source) {
+  #call(msg, transfer) {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      this.calls.set(id, { resolve, reject });
+      this.worker.postMessage({ ...msg, id }, transfer);
+    });
+  }
+
+  async load(model = "heavy") {
+    this.ready = false;
+    await this.#call({ type: "load", model });
+    this.model = model;
+    this.ready = true;
+  }
+
+  // Resolves to { lm, world } for the first pose, or null. `source` is a video, image or canvas.
+  async detect(source) {
     const ts = Math.max(performance.now(), this.lastTs + 1); // timestamps must strictly increase
     this.lastTs = ts;
-    const t0 = performance.now();
-    const r = this.landmarker.detectForVideo(source, ts);
-    this.ms = performance.now() - t0;
-    return r.landmarks[0] ? { lm: r.landmarks[0], world: r.worldLandmarks[0] } : null;
+    const frame = await createImageBitmap(source);
+    const r = await this.#call({ type: "detect", frame, ts }, [frame]);
+    this.ms = r.ms;
+    return r.lm ? { lm: r.lm, world: r.world } : null;
   }
 }
 

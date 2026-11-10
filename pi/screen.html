@@ -1,0 +1,65 @@
+<!doctype html>
+<!-- Full-screen page on the Pi's HDMI display; posture_display.py serves it and feeds it frames from the Mac. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Posture Flower display</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; cursor: none; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const c = document.getElementById("c"), g = c.getContext("2d", { alpha: false });
+let last = null;
+
+function fit() {
+  c.width = Math.round(innerWidth * devicePixelRatio);
+  c.height = Math.round(innerHeight * devicePixelRatio);
+  last ? draw(last) : waiting();
+}
+
+function waiting() {
+  g.fillStyle = "#000"; g.fillRect(0, 0, c.width, c.height);
+  g.fillStyle = "#444"; g.textAlign = "center"; g.textBaseline = "middle";
+  g.font = `${Math.round(c.height / 30)}px system-ui, sans-serif`;
+  g.fillText("waiting for Posture Flower", c.width / 2, c.height / 2);
+}
+
+// Scale the frame to fill the screen without stretching; the frames have a black background, so bars blend in.
+function draw(bmp) {
+  const s = Math.min(c.width / bmp.width, c.height / bmp.height), w = bmp.width * s, h = bmp.height * s;
+  g.fillStyle = "#000"; g.fillRect(0, 0, c.width, c.height);
+  g.imageSmoothingQuality = "high";
+  g.drawImage(bmp, (c.width - w) / 2, (c.height - h) / 2, w, h);
+}
+
+let sock = null;
+const sendSize = () => sock?.readyState === 1 && sock.send(`size ${c.width}x${c.height}`);  // the Mac renders to fit
+
+function connect() {
+  const ws = sock = new WebSocket(`ws://${location.host}/screen`);
+  ws.binaryType = "blob";
+  ws.onopen = sendSize;
+  ws.onmessage = async e => {
+    const t0 = performance.now();
+    try {
+      const bmp = await createImageBitmap(e.data);
+      last?.close();
+      last = bmp;
+      draw(bmp);
+    } finally {
+      ws.send("ok " + (performance.now() - t0).toFixed(1));  // ready for the next frame
+    }
+  };
+  ws.onclose = () => setTimeout(connect, 1000);  // the server restarted or isn't up yet
+}
+
+addEventListener("resize", () => { fit(); sendSize(); });
+fit();
+connect();
+</script>
+</body>
+</html>

@@ -183,6 +183,7 @@ export class Flower {
     this.lcdCamera = new THREE.PerspectiveCamera(42, 320 / 240, 0.1, 100);
     this.lcdCamera.position.set(3.8, 2.9, 3.8);
     this.lcdCamera.lookAt(0, 1.8, 0);
+    this.screenZoom = 2;   // closest framing on a bigger external screen (display.js auto-frames out to fit a swinging bloom)
 
     this._onResize = () => this.resize();
     addEventListener("resize", this._onResize);
@@ -191,6 +192,26 @@ export class Flower {
 
   renderLcd(renderer) {
     renderOnBlack(renderer, this.scene, this.lcdCamera, this.ground);
+  }
+
+  // For framing (display.js): half-angle tangents, across and up, that the plant spans as seen from `camera`,
+  // from every vertex of its meshes.
+  screenBounds(camera) {
+    this.pot.updateMatrixWorld(true);
+    const m = this._bm ??= new THREE.Matrix4(), p = this._bp ??= new THREE.Vector3();
+    let x = 0, y = 0;
+    this.pot.traverse(o => {
+      if (!o.isMesh || !o.visible) return;
+      const pos = o.geometry.attributes.position;
+      m.multiplyMatrices(camera.matrixWorldInverse, o.matrixWorld);
+      for (let i = 0; i < pos.count; i++) {
+        p.fromBufferAttribute(pos, i).applyMatrix4(m);
+        const d = Math.max(-p.z, 0.05);
+        x = Math.max(x, Math.abs(p.x) / d);
+        y = Math.max(y, Math.abs(p.y) / d);
+      }
+    });
+    return { x, y };
   }
 
   dispose() {

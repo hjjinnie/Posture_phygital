@@ -34,7 +34,8 @@
   #score { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .foot { color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
   .lcd { border-top: 1px solid var(--line); padding-top: 10px; display: grid; gap: 8px; }
-  #lcdPreview canvas { display: block; width: 160px; height: 120px; border-radius: 4px; background: #000; }
+  #lcdPreview canvas { display: block; width: auto; height: auto; max-width: 160px; max-height: 160px; border-radius: 4px; background: #000; }
+  input[type=text] { background: #0e1317; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; width: 110px; }
   details { border-top: 1px solid var(--line); padding-top: 8px; }
   summary { cursor: pointer; color: var(--dim); }
   .slider { display: grid; grid-template-columns: 96px 1fr; gap: 6px; align-items: center; font-size: 12px; color: var(--dim); }
@@ -70,11 +71,15 @@
   <div id="metrics"></div>
   <div class="foot" id="foot"></div>
   <div class="lcd">
+    <div class="row">
+      <label>Screen <select id="dispTarget"></select></label>
+      <input type="text" id="piHost" title="The Pi's address: 10.12.194.1 over the USB cable, or its name/IP on Wi-Fi" spellcheck="false">
+    </div>
     <div class="row" style="justify-content: space-between">
-      <button id="lcdBtn">Connect LCD</button>
+      <button id="lcdBtn">Connect</button>
       <span class="foot" id="lcdStatus"></span>
     </div>
-    <div id="lcdPreview" title="What the ESP32 LCD shows"></div>
+    <div id="lcdPreview" title="What the external screen shows"></div>
   </div>
   <details id="manual">
     <summary>Manual: drive the flower with sliders</summary>

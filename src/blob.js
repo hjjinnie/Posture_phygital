@@ -366,6 +366,7 @@ export class JelloBlob {
     this.lcdCamera = new THREE.PerspectiveCamera(35, 320 / 240, 0.1, 100);
     this.lcdCamera.position.set(0, 1.9, 5.0);
     this.lcdCamera.lookAt(0, 1.3, 0);
+    this.screenZoom = 2;   // closest framing on a bigger external screen (display.js auto-frames out to fit droplets)
 
     this._onResize = () => this.resize();
     addEventListener("resize", this._onResize);
@@ -418,6 +419,23 @@ export class JelloBlob {
     this.#setPixel(this.lcdCamera, renderer.domElement.height);
     renderOnBlack(renderer, this.scene, this.lcdCamera, this.ground);
     this.u.uProj.value = this.camera.projectionMatrix;
+  }
+
+  // For framing (display.js): half-angle tangents, across and up, that everything the raymarcher can draw spans as
+  // seen from `camera`. The shape lies within the spine, droplet and tail spheres, squashed about the centre as the
+  // shader does, plus the smooth blend between them (≤ uK/4) and the surface ripples (≤ uLump).
+  screenBounds(camera) {
+    const u = this.u, c = u.uCenter.value, sq = u.uSquash.value, s = Math.sqrt(sq), stretch = Math.max(1 / s, sq);
+    const pad = u.uK.value / 4 + u.uLump.value + 0.02, m = camera.matrixWorldInverse, p = this._bp ??= new THREE.Vector3();
+    let x = 0, y = 0;
+    for (const list of [u.uSpine.value, u.uDrop.value, u.uTail.value]) for (const v of list) {
+      if (v.w <= 0.001) continue;
+      p.set(c.x + (v.x - c.x) / s, c.y + (v.y - c.y) * sq, c.z + (v.z - c.z) / s).applyMatrix4(m);
+      const r = v.w * stretch + pad, depth = Math.max(-p.z - r, 0.05);
+      x = Math.max(x, (Math.abs(p.x) + r) / depth);
+      y = Math.max(y, (Math.abs(p.y) + r) / depth);
+    }
+    return { x, y };
   }
 
   #setPixel(camera, heightPx) {

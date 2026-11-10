@@ -1,7 +1,7 @@
 import { PoseEngine, drawSkeleton } from "./pose.js";
 import { extractFeatures, FeatureFilter, scorePosture, Wellbeing, median } from "./posture.js";
 import { VISUALS } from "./visuals.js";
-import { LcdLink } from "./lcd.js";
+import { DisplayLink, TARGETS } from "./display.js";
 
 const q = new URLSearchParams(location.search);
 const INFER_HZ = +(q.get("hz") || 15);          // posture changes over seconds; 15 Hz leaves room for 60 fps rendering
@@ -13,10 +13,9 @@ const $ = id => document.getElementById(id);
 const video = $("video"), overlay = $("overlay"), octx = overlay.getContext("2d");
 const engine = new PoseEngine();
 const wellbeing = new Wellbeing(+(q.get("tau") || 45));
-const lcd = new LcdLink({ fps: +(q.get("lcdfps") || 20) });
 let filter = new FeatureFilter();
 
-const app = window.app = { visual: null, engine, lcd, source: null, srcName: null, baseline: null, features: null, state: null, calib: null, inferMs: 0 };
+const app = window.app = { visual: null, engine, display: null, source: null, srcName: null, baseline: null, features: null, state: null, calib: null, inferMs: 0 };
 const NEUTRAL = { trunk: 0, lateral: 0, head: 0, headRoll: 0, shoulderTilt: 0, protraction: 0, elevL: 0, elevR: 0 };
 
 // ---- visuals (only the selected one exists; switching frees the other's GPU context) ----
@@ -27,7 +26,8 @@ async function setVisual(name) {
   if (!VISUALS[name]) name = "flower";
   const Visual = await VISUALS[name].load();
   visual?.dispose();
-  visual = app.visual = lcd.visual = new Visual($("stage"));
+  visual = app.visual = new Visual($("stage"));
+  if (display) display.visual = visual;
   visual.setTarget(target);
   $("visual").value = name;
   try { localStorage.setItem("posture-flower.visual", name); } catch {}
@@ -122,8 +122,9 @@ app.infer = () => infer();   // lets tests step the pipeline when timers are thr
 app.setSource = setSource;
 
 // ---- main loop ----
-let lastInfer = performance.now(), lastVideoTime = -1, lastFrame = performance.now(), fps = 0;
-function infer() {
+let lastInfer = performance.now(), lastVideoTime = -1, lastFrame = performance.now(), fps = 0, inferring = false;
+async function infer() {
+  if (inferring) return;   // the worker is still on the previous frame
   const now = performance.now();
   const dt = (now - lastInfer) / 1000; lastInfer = now;
   const src = app.source;
@@ -131,7 +132,12 @@ function infer() {
     if (video.readyState < 2 || video.currentTime === lastVideoTime) return;
     lastVideoTime = video.currentTime;
   }
-  const r = engine.detect(src);
+  let r;
+  inferring = true;
+  try { r = await engine.detect(src); }
+  catch { return; }        // e.g. the model is being switched
+  finally { inferring = false; }
+  if (src !== app.source) return;
   app.inferMs = engine.ms;
 
   octx.clearRect(0, 0, overlay.width, overlay.height);
@@ -161,14 +167,19 @@ function infer() {
   renderMetrics(s);
 }
 
+// While an external screen is streaming, this window's own view drops to 30 fps: on an integrated GPU the two 3D views
+// and the pose model compete, and the external screen is the one being watched (measured with the blob: Pi stream
+// 17 → 25 fps, pose model 150 → 60 ms).
+const SHARED_FPS = +(q.get("mainfps") || 30);
 function loop(now) {
+  if (display?.connected && now - lastFrame < 1000 / SHARED_FPS - 4) return requestAnimationFrame(loop);
   const dt = (now - lastFrame) / 1000; lastFrame = now;
   fps += (1 / Math.max(dt, 1e-3) - fps) * 0.05;
   if (manualOn()) setTarget(manual);
   if (visual) { visual.step(dt, now / 1000); visual.render(); }
   $("foot").textContent = `${engine.model ?? "…"} · inference ${app.inferMs.toFixed(0)} ms @ ${INFER_HZ} Hz · render ${fps.toFixed(0)} fps` +
     (app.baseline ? "" : " · not calibrated");
-  renderLcdStatus();
+  renderDisplayStatus();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
@@ -180,30 +191,52 @@ const ticker = new Worker(URL.createObjectURL(new Blob(["setInterval(() => postM
 let lastTick = performance.now();
 ticker.onmessage = () => {
   const now = performance.now();
-  if (app.source && engine.landmarker && now - lastInfer >= 1000 / INFER_HZ - 5) infer();
+  if (app.source && engine.ready && now - lastInfer >= 1000 / INFER_HZ - 5) infer();
   if (now - lastFrame > 100) {
     if (manualOn()) setTarget(manual);
     visual?.step((now - lastTick) / 1000, now / 1000);
   }
   lastTick = now;
-  lcd.tick(now);
+  display?.tick(now);
 };
 
-// ---- LCD ----
-$("lcdPreview").appendChild(lcd.canvas);
-function renderLcdStatus() {
-  const s = lcd.stats;
-  $("lcdBtn").textContent = lcd.connected ? "Disconnect LCD" : "Connect LCD";
-  $("lcdStatus").textContent = !lcd.supported ? "Needs Chrome or Edge (Web Serial)"
-    : lcd.connected ? `${s.fps.toFixed(0)} fps · ${s.kb.toFixed(1)} KB/frame · board ${s.boardMs} ms` + (s.errors ? ` · ${s.errors} errors` : "")
+// ---- external screen: Raspberry Pi over HDMI, or the ESP32 LCD ----
+const store = (k, v) => { try { v === undefined ? (v = localStorage.getItem(k)) : localStorage.setItem(k, v); } catch {} return v; };
+let display = null;
+$("dispTarget").innerHTML = Object.entries(TARGETS).map(([k, t]) => `<option value="${k}">${t.label}</option>`).join("");
+$("piHost").value = q.get("pi") || store("posture-flower.piHost") || "10.12.194.1";
+
+function setDisplay(target) {
+  if (!TARGETS[target]) target = "pi";
+  display?.dispose();
+  display = app.display = new DisplayLink(target, { host: $("piHost").value.trim(), ...(q.get("dispfps") && { fps: +q.get("dispfps") }), ...(q.get("zoom") && { zoom: q.get("zoom") === "auto" ? "auto" : +q.get("zoom") }) });
+  display.visual = visual;
+  $("lcdPreview").replaceChildren(display.canvas);
+  $("dispTarget").value = target;
+  $("piHost").hidden = target !== "pi";
+  $("lcdBtn").disabled = !display.supported;
+  store("posture-flower.display", target);
+}
+setDisplay(q.get("display") || store("posture-flower.display"));
+if (q.get("connect") === "1" && display.target === "pi") display.connect().catch(e => banner(e.message, 6000));  // no picker needed
+
+function renderDisplayStatus() {
+  const s = display.stats;
+  $("lcdBtn").textContent = display.connected ? "Disconnect" : "Connect";
+  $("lcdStatus").textContent = !display.supported ? "Needs Chrome or Edge (Web Serial)"
+    : display.connected ? `${s.fps.toFixed(0)} fps · ${s.kb.toFixed(0)} KB/frame` + (s.note ? ` · ${s.note}` : "")
     : "Not connected";
 }
-$("lcdBtn").disabled = !lcd.supported;
+$("dispTarget").onchange = e => setDisplay(e.target.value);
+$("piHost").onchange = e => { store("posture-flower.piHost", e.target.value.trim()); setDisplay("pi"); };
 $("lcdBtn").onclick = async () => {
-  try { lcd.connected ? await lcd.disconnect() : await lcd.connect(); }
-  catch (e) {
-    // NotFoundError: the picker was cancelled, or this browser (e.g. an embedded preview) can't show one.
-    banner(e.name === "NotFoundError" ? "No port chosen. In Chrome or Edge, pick “USB JTAG/serial debug unit”." : `LCD: ${e.message}`, 5000);
+  try {
+    if (display.target === "pi") display.transport.host = $("piHost").value.trim();
+    display.connected ? await display.disconnect() : await display.connect();
+  } catch (e) {
+    // NotFoundError: the serial picker was cancelled, or this browser (e.g. an embedded preview) can't show one.
+    banner(e.name === "NotFoundError" ? "No port chosen. In Chrome or Edge, pick “USB JTAG/serial debug unit”."
+      : display.target === "pi" ? `${e.message}. Is the Pi plugged in and posture_display.py running?` : `LCD: ${e.message}`, 6000);
   }
 };
 
