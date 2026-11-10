@@ -47,7 +47,7 @@ URL options: `?visual=flower|blob`, `?model=lite|full|heavy` (lite is the defaul
 | `src/main.js` | camera, calibration, inference timer, UI |
 | `serve.py` | local web server that keeps the browser from running stale code |
 | `pi/` | Raspberry Pi screen: `posture_display.py` (receives frames), `screen.html` (full-screen page), `install.sh`, `kiosk.sh` |
-| `esp32/FlowerStream/` | Arduino sketch for the ESP32-S3 + ST7789 LCD |
+| `esp32/PostureBuddy/` | Arduino sketch for the ESP32-S3 + ST7789 LCD |
 | `esp32/lcd_test.py` | sends JPEG files to the board and reports frame rate (needs pyserial) |
 
 ## Raspberry Pi screen (HDMI)
@@ -96,7 +96,7 @@ at power-on the screen shows "loading..." until the first frame arrives.
 
 1. Wire the LCD: DIN→GPIO11, CLK→GPIO12, CS→GPIO10, DC→GPIO9, RST→GPIO8, VCC→3V3, GND→GND, BL→3V3.
 2. Install the **LovyanGFX** and **JPEGDEC** libraries.
-3. Open `esp32/FlowerStream/FlowerStream.ino`. Board: *ESP32S3 Dev Module*, USB CDC On Boot: *Enabled*,
+3. Open `esp32/PostureBuddy/PostureBuddy.ino`. Board: *ESP32S3 Dev Module*, USB CDC On Boot: *Enabled*,
    Flash Size: *16MB*, Partition Scheme: *16M Flash (3MB APP/9.9MB FATFS)*, PSRAM: *OPI PSRAM*. Upload.
 4. In Chrome or Edge, set **Screen** to *ESP32 LCD*, press **Connect** and pick the "USB JTAG/serial debug unit" port.
    Close the Arduino Serial Monitor first; only one program can hold the port.
@@ -104,7 +104,7 @@ at power-on the screen shows "loading..." until the first frame arrives.
 Command-line equivalent of step 3:
 
 ```bash
-arduino-cli compile --upload -p /dev/cu.usbmodem14201 -b "esp32:esp32:esp32s3:CDCOnBoot=cdc,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=opi" esp32/FlowerStream
+arduino-cli compile --upload -p /dev/cu.usbmodem14201 -b "esp32:esp32:esp32s3:CDCOnBoot=cdc,FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=opi" esp32/PostureBuddy
 ```
 
 The SPI clock is 80 MHz. If the image shows noise or wrong colours, set `SPI_HZ` to 40 MHz in the sketch.

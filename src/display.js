@@ -1,7 +1,7 @@
 // Streams the current visual to an external screen as JPEG frames.
 // A second, small renderer draws the visual's display view (its `lcdCamera`, on black); a transport carries the frames:
 //   PiTransport     WebSocket to pi/posture_display.py, which shows them full screen on the Pi's HDMI display.
-//   SerialTransport Web Serial (Chrome/Edge) to esp32/FlowerStream: "FLWR" + uint32 LE length + JPEG,
+//   SerialTransport Web Serial (Chrome/Edge) to esp32/PostureBuddy: "FLWR" + uint32 LE length + JPEG,
 //                   answered by "OK" + status + uint16 total ms + uint16 LCD-wait ms.
 // The Pi and the board acknowledge each frame as soon as it arrives.
 import * as THREE from "three";

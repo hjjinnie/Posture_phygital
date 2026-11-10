@@ -1,4 +1,4 @@
-"""Send JPEG files to the FlowerStream sketch and report throughput.
+"""Send JPEG files to the PostureBuddy sketch and report throughput.
 
 Usage: python lcd_test.py /dev/cu.usbmodemXXXX frame1.jpg [frame2.jpg ...] [--n 100]
 Needs pyserial (pip install pyserial).
