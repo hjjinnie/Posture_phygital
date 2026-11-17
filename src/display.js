@@ -10,6 +10,7 @@ import * as THREE from "three";
 // visual every frame from its own geometry (visual.screenBounds): as close as maxZoom while the visual is compact,
 // widening in the same frame whenever anything would come within the margin of an edge, so nothing is ever cut off.
 // maxZoom "visual" means the visual's own screenZoom. A number for zoom gives a fixed shot instead.
+export const FLIPS = { none: "Normal", v: "Flip vertical", h: "Flip horizontal", both: "Rotate 180°" };
 export const TARGETS = {
   pi: { label: "Raspberry Pi (HDMI)", width: 960, height: 540, fps: 30, quality: 0.85, zoom: "auto", maxZoom: "visual" },
   esp32: { label: "ESP32 LCD (USB serial)", width: 320, height: 240, fps: 20, quality: 0.8, zoom: "auto", maxZoom: 1 },
@@ -19,14 +20,31 @@ const IN_TAU = 2.5;    // seconds; moving in again is slow so the shot doesn't p
 
 // Frames leave the GPU through an asynchronous read (WebGL2 pixel-buffer + fence), so neither the page nor the GPU
 // waits: a plain readPixels() or toBlob() blocked for 30-150 ms behind the 3D views and pose model, which held the
-// stream to ~10 fps and pulled the main view down. A worker flips the rows and JPEG-encodes them (~5 ms at 960x540).
-const ENCODER = `let oc, g;
-onmessage = async ({ data: { px, w, h, seq, quality } }) => {
+// stream to ~10 fps and pulled the main view down. A worker puts the rows the right way up (GL rows are bottom-up),
+// applies the screen's orientation (e.g. flipped for a screen projected from above) and brightness, and JPEG-encodes
+// (~5 ms at 960x540, a few more with brightness). Brightness b lifts faint and mid tones along 1 - (1 - v)^b: black stays
+// black (it's a projected image) and white never clips; b = 1 leaves the picture unchanged.
+const ENCODER = `let oc, g, lut = null, lutFor = 1;
+onmessage = async ({ data: { px, w, h, seq, quality, flip, bright = 1 } }) => {
   if (!oc || oc.width !== w || oc.height !== h) {
     oc = new OffscreenCanvas(w, h); g = oc.getContext("2d", { alpha: false, willReadFrequently: true });
   }
   const src = new Uint32Array(px), img = new ImageData(w, h), dst = new Uint32Array(img.data.buffer);
-  for (let y = 0; y < h; y++) dst.set(src.subarray((h - 1 - y) * w, (h - y) * w), y * w);  // GL rows are bottom-up
+  const flipV = flip === "v" || flip === "both", flipH = flip === "h" || flip === "both";
+  for (let y = 0; y < h; y++) {
+    const from = flipV ? y : h - 1 - y;
+    dst.set(src.subarray(from * w, (from + 1) * w), y * w);
+    if (flipH) dst.subarray(y * w, (y + 1) * w).reverse();
+  }
+  if (bright !== 1) {
+    if (lutFor !== bright) {
+      lut = new Uint8Array(256);
+      for (let v = 0; v < 256; v++) lut[v] = Math.round(255 * (1 - Math.pow(1 - v / 255, bright)));
+      lutFor = bright;
+    }
+    const d = img.data;
+    for (let i = 0; i < d.length; i += 4) { d[i] = lut[d[i]]; d[i + 1] = lut[d[i + 1]]; d[i + 2] = lut[d[i + 2]]; }
+  }
   g.putImageData(img, 0, 0);
   postMessage({ seq, jpg: await oc.convertToBlob({ type: "image/jpeg", quality }) });
 };`;
@@ -38,6 +56,8 @@ export class DisplayLink {
     this.fps = t.fps;
     this.quality = t.quality;
     this.zoom = t.zoom;        // "auto", or a fixed number
+    this.flip = t.flip ?? "none";   // stream orientation: "none" | "v" | "h" | "both" (rotate 180°)
+    this.bright = t.bright ?? 1;    // stream brightness: 1 = unchanged, higher lifts faint and mid tones
     this.maxZoom = t.maxZoom;
     this.half = null;          // current auto-framed vertical half-angle tangent
     this.transport = target === "pi" ? new PiTransport(host) : new SerialTransport();
@@ -165,7 +185,7 @@ export class DisplayLink {
       gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, px);
       gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
       this.encoding++;
-      this.encoder.postMessage({ px: px.buffer, w, h, seq: s.seq, quality: this.quality }, [px.buffer]);
+      this.encoder.postMessage({ px: px.buffer, w, h, seq: s.seq, quality: this.quality, flip: this.flip, bright: this.bright }, [px.buffer]);
     }
   }
 

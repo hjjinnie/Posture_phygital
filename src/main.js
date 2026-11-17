@@ -4,7 +4,7 @@ import { PosturePipeline, SETTINGS } from "./pipeline.js";
 import { STUDY, Recorder, conditionFor, suggestedOrder, rescoreParticipant, loadCalibration, saveCalibration,
   loadParticipant, saveParticipant } from "./study.js";
 import { VISUALS, DEFAULT_VISUAL } from "./visuals.js";
-import { DisplayLink, TARGETS } from "./display.js";
+import { DisplayLink, TARGETS, FLIPS } from "./display.js";
 
 const q = new URLSearchParams(location.search);
 // Running from serve.py on this machine, or hosted (e.g. Cloudflare Pages)? Study recording saves through serve.py,
@@ -248,6 +248,20 @@ ticker.onmessage = () => {
 let display = null;
 $("dispTarget").innerHTML = Object.entries(TARGETS).map(([k, t]) => `<option value="${k}">${t.label}</option>`).join("");
 $("piHost").value = q.get("pi") || store("piHost") || "10.12.194.1";
+// Stream orientation: projected from above, the screen's picture is seen mirrored, so the stream is flipped to match.
+$("dispFlip").innerHTML = Object.entries(FLIPS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
+$("dispFlip").value = FLIPS[q.get("flip")] ? q.get("flip") : store("dispFlip") || "v";
+// Stream brightness for a faint screen: lifts dim tones, keeps black black (display.js).
+$("dispBright").value = +(q.get("bright") || store("dispBright") || 2);
+function applyFlip() {
+  const f = $("dispFlip").value, b = +$("dispBright").value;
+  display.flip = f;
+  display.bright = b;
+  $("dispBrightOut").textContent = `${b.toFixed(1)}×`;
+  // The preview approximates what's sent.
+  display.canvas.style.transform = { none: "", v: "scaleY(-1)", h: "scaleX(-1)", both: "scale(-1,-1)" }[f];
+  display.canvas.style.filter = b === 1 ? "" : `brightness(${(1 + (b - 1) * 0.6).toFixed(2)})`;
+}
 
 function setDisplay(target) {
   if (!TARGETS[target]) target = "pi";
@@ -258,6 +272,7 @@ function setDisplay(target) {
   $("dispTarget").value = target;
   $("piHost").hidden = target !== "pi";
   $("lcdBtn").disabled = !display.supported;
+  applyFlip();
   store("display", target);
 }
 setDisplay(q.get("display") || store("display"));
@@ -271,6 +286,8 @@ function renderDisplayStatus() {
     : "Not connected";
 }
 $("dispTarget").onchange = e => setDisplay(e.target.value);
+$("dispFlip").onchange = e => { store("dispFlip", e.target.value); applyFlip(); };
+$("dispBright").oninput = e => { store("dispBright", e.target.value); applyFlip(); };
 $("piHost").onchange = e => { store("piHost", e.target.value.trim()); setDisplay("pi"); };
 $("lcdBtn").onclick = async () => {
   try {

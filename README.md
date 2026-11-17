@@ -37,7 +37,7 @@ it's remembered.
 URL options: `?visual=ema-liquid|ema-contour|ema-dandelion|ema-branching|blob`, `?model=lite|full|heavy` (lite is the default; heavy is more accurate but slower, and calibration is kept per model), `?hz=15` (inference rate), `?studymin=22` (study session length, shorten for a dry run),
 `?src=front-man&autocal=1` (run on a test photo instead of the webcam),
 `?display=pi|esp32`, `?pi=10.12.194.1` (the Pi's address), `?connect=1` (connect to the Pi on load), `?dispfps=30`,
-`?mainfps=30` (this window's frame rate while streaming), `?zoom=1.5` (a fixed framing for the external screen instead of the automatic one).
+`?mainfps=30` (this window's frame rate while streaming), `?flip=none|v|h|both` (stream orientation), `?zoom=1.5` (a fixed framing for the external screen instead of the automatic one).
 `bench.html` benchmarks the three models on the test photos.
 
 ## Hosted version
@@ -148,6 +148,11 @@ Nothing needs installing on the Pi beyond Raspberry Pi OS with desktop (the serv
    ```bash
    scp -r pi <user>@10.12.194.1:posture-buddy/ && ssh <user>@10.12.194.1 posture-buddy/pi/install.sh
    ```
+
+**Orientation:** projected from above (the screen reflected in glass), the picture is seen mirrored, so the stream is
+flipped vertically by default. **Orientation** next to **Screen** offers Normal, Flip vertical, Flip horizontal and
+Rotate 180°; the preview shows what's sent, and this window's own view is never flipped. **Brightness** (default 2×)
+lifts faint and mid tones on the screen while keeping black black and never clipping white (`?bright=2`).
 
 **Each time:** in the app on the Mac, set **Screen** to *Raspberry Pi (HDMI)*, check the address (`10.12.194.1` over
 USB, or the Pi's name or IP on Wi-Fi) and press **Connect**. The status line shows the stream rate and how fast the Pi
