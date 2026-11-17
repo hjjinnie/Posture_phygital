@@ -2,7 +2,7 @@ import { PoseEngine, drawSkeleton } from "./pose.js";
 import { extractFeatures, median } from "./posture.js";
 import { PosturePipeline, SETTINGS } from "./pipeline.js";
 import { STUDY, Recorder, conditionFor, suggestedOrder, rescoreParticipant, loadCalibration, saveCalibration,
-  loadParticipant, saveParticipant } from "./study.js";
+  loadParticipant, saveParticipant, setStorage, checkStorage, downloadParticipant } from "./study.js";
 import { VISUALS, DEFAULT_VISUAL } from "./visuals.js";
 import { DisplayLink, TARGETS, FLIPS } from "./display.js";
 
@@ -11,6 +11,8 @@ const q = new URLSearchParams(location.search);
 // and browsers block an https page from reaching the Pi's plain ws:// address, so both need the local app.
 const LOCAL = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(location.hostname);
 const LOCAL_ONLY = "needs the local app: run python3 serve.py and open http://localhost:8785";
+// Study data in the cloud: the hosted site's own API, or the same API from the local app (?api= overrides, for testing).
+const CLOUD_API = q.has("api") ? q.get("api") : LOCAL ? "https://posture-buddy.pages.dev" : "";
 const INFER_HZ = +(q.get("hz") || 15);
 if (q.get("studymin")) STUDY.sessionMinutes = +q.get("studymin");   // shorter sessions, for testing the study flow          // posture changes over seconds; 15 Hz leaves room for 60 fps rendering
 const CAL_SECONDS = 1.5;
@@ -317,8 +319,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function startSession() {
   if (inStudy()) return;
   const pid = $("pid").value.trim(), session = +$("session").value, order = $("order").value;
-  if (!LOCAL) return studyNote(`Study recording ${LOCAL_ONLY}.`);
   if (!/^[A-Za-z0-9_-]{1,40}$/.test(pid)) return studyNote("Enter a participant ID (letters, digits, - or _).");
+  try { await checkStorage(); } catch (e) { return studyNote(`Can't start: ${e.message}.`); }
   if (!app.source) return studyNote("Start the camera first.");
   if (!engine.ready) return studyNote("Wait for the pose model to load.");
   const condition = conditionFor(order, session);
@@ -332,7 +334,7 @@ async function startSession() {
       W: overlay.width, H: overlay.height, source: app.srcName, model: engine.model, settings: SETTINGS, study: STUDY });
   } catch (e) {
     study.phase = "idle";
-    return studyNote(`Can't save study data (${e.message}). Is the app running from serve.py?`);
+    return studyNote(`Can't save study data (${e.message}).`);
   }
   study.recording = true;
   app.pipeline = null;   // nothing is shown or scored until the timer starts
@@ -389,7 +391,7 @@ async function endSession(early) {
 function studyNote(text) { study.note = text; renderStudyStatus(performance.now()); }
 function studyControls() {
   const busy = inStudy();
-  for (const id of ["pid", "order", "session", "studyStart", "studyRescore"]) $(id).disabled = busy;
+  for (const id of ["pid", "order", "session", "studyStart", "studyRescore", "studyDownload", "saveTo", "studyKey"]) $(id).disabled = busy;
   $("studyStop").disabled = !busy || study.phase === "saving";
   $("studyCond").textContent = `Session ${$("session").value}: ${conditionFor($("order").value, +$("session").value)}`;
 }
@@ -425,8 +427,28 @@ $("participantView").onclick = () => participantView(true);
 addEventListener("keydown", e => { if (e.key === "Escape") participantView(false); });
 addEventListener("beforeunload", e => { if (inStudy()) { e.preventDefault(); e.returnValue = ""; } });
 studyControls();
-if (!LOCAL) studyNote("Hosted version: study recording and the Pi screen need the local app (run python3 serve.py, then open http://localhost:8785).");
-else if ($("pid").value) $("pid").onchange();
+$("studyDownload").onclick = async () => {
+  const pid = $("pid").value.trim();
+  if (!pid) return studyNote("Enter a participant ID.");
+  try { const n = await downloadParticipant(pid); studyNote(n ? `Downloaded ${n} files for ${pid}.` : `No files for ${pid}.`); }
+  catch (e) { studyNote(`Download failed: ${e.message}`); }
+};
+// Where study data is saved: Cloudflare (default; needs the study key) or this Mac (only when running from serve.py).
+$("saveTo").querySelector('[value="local"]').disabled = !LOCAL;
+$("saveTo").value = LOCAL && store("study.saveTo") === "local" ? "local" : "cloud";
+$("studyKey").value = store("study.key") || "";
+async function applyStorage() {
+  const mode = $("saveTo").value;
+  $("studyKey").hidden = mode !== "cloud";
+  setStorage(mode, $("studyKey").value.trim(), CLOUD_API);
+  if (mode === "cloud" && !$("studyKey").value.trim()) return studyNote("Enter the study key to save to Cloudflare.");
+  try { studyNote(await checkStorage()); if ($("pid").value) $("pid").onchange(); }
+  catch (e) { studyNote(`Study storage: ${e.message}.`); }
+}
+$("saveTo").onchange = () => { store("study.saveTo", $("saveTo").value); applyStorage(); };
+$("studyKey").onchange = () => { store("study.key", $("studyKey").value.trim()); applyStorage(); };
+applyStorage();
+if (!LOCAL) setTimeout(() => { if (!inStudy()) banner("Hosted version: the Pi screen needs the local app (python3 serve.py, then http://localhost:8785)", 6000); }, 1500);
 
 // ---- wiring ----
 $("startBtn").onclick = () => setSource($("src").value);

@@ -42,16 +42,28 @@ URL options: `?visual=ema-liquid|ema-contour|ema-dandelion|ema-branching|blob`, 
 
 ## Hosted version
 
-https://posture-buddy.pages.dev (Cloudflare Pages, free plan) runs the visuals and live posture tracking in Chrome
-with no setup. Study recording and the Raspberry Pi screen need the local app (`python3 serve.py`): study data stays on
-this Mac, and browsers block an https page from reaching the Pi's local address. To publish the latest commit:
+https://posture-buddy.pages.dev (Cloudflare Pages, free plan) runs the visuals, live posture tracking and study sessions
+in Chrome with no setup. Study recordings are saved to Cloudflare (a D1 database, `posture-study`), protected by a
+**study key**. The Raspberry Pi screen still needs the local app (`python3 serve.py`), because browsers block an https
+page from reaching the Pi's local address; the local app can save study data to Cloudflare too.
+
+**Study storage** (Study panel → **Save to**):
+- **Cloudflare** (default): enter the study key once per browser. Works from the hosted site and the local app, so a
+  session that drives the Pi screen still lands in the cloud. **Download** saves a participant's files.
+- **This Mac (data/)**: only from the local app; files go to `data/<participant>/`.
+
+**Setting the study key** (once, by you; it's never in the code). Choose a long passphrase and run, then type it when asked:
 
 ```bash
-./deploy.sh
+PATH=/usr/local/opt/node@20/bin:$PATH npx --yes wrangler@3 pages secret put STUDY_KEY --project-name posture-buddy
 ```
 
-It uploads only committed files (never `data/`), without the Pi, ESP32 and server files. The first run asks you to sign
-in to Cloudflare in the browser.
+Then run `./deploy.sh` once so the site picks it up. Share the key only with researchers; changing it the same way
+locks out old copies.
+
+**Publishing the latest commit:** `./deploy.sh` (uploads committed files only, never `data/`; `./deploy.sh --dev` runs
+the same site and API locally with a test database). The API is `functions/api/data/[[path]].js`; the database and
+project are in `wrangler.toml`.
 
 ## Layout
 
@@ -67,7 +79,9 @@ in to Cloudflare in the browser.
 | `src/blob.js` | raymarched jello blob (same `setTarget` contract); main view capped at 0.3 MP to keep it fast |
 | `src/display.js` | renders the selected visual's view for an external screen and streams it as JPEG frames: WebSocket to the Pi, or Web Serial to the ESP32 |
 | `src/main.js` | camera, calibration, inference timer, UI |
-| `serve.py` | local web server that keeps the browser from running stale code |
+| `serve.py` | local web server that keeps the browser from running stale code, and saves study data to `data/` |
+| `functions/api/data/` | the hosted study data API (Cloudflare Pages Function, D1 database), protected by the study key |
+| `deploy.sh`, `wrangler.toml` | publish to Cloudflare Pages |
 | `pi/` | Raspberry Pi screen: `posture_display.py` (receives frames), `screen.html` (full-screen page), `install.sh`, `kiosk.sh` |
 | `esp32/PostureBuddy/` | Arduino sketch for the ESP32-S3 + ST7789 LCD |
 | `esp32/lcd_test.py` | sends JPEG files to the board and reports frame rate (needs pyserial) |

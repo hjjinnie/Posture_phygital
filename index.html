@@ -41,6 +41,7 @@
   .slider { display: grid; grid-template-columns: 96px 1fr; gap: 6px; align-items: center; font-size: 12px; color: var(--dim); }
   .study { border: 1px solid var(--line); border-radius: 8px; padding: 10px; display: grid; gap: 8px; }
   .study input[type=text] { width: 64px; }
+  input[type=password] { background: #0e1317; color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
   #studyStatus { color: var(--text); }
   body.participant { grid-template-columns: 1fr; }
   body.participant #panel { display: none; }
@@ -70,7 +71,14 @@
       <button id="studyStart" class="primary">Start session</button>
       <button id="studyStop" disabled>End early</button>
       <button id="studyRescore" title="Re-score this participant's recorded sessions">Re-score</button>
+      <button id="studyDownload" title="Download this participant's recordings, scores and summary">Download</button>
       <button id="participantView" title="Show only the artifact; press Esc to come back">Participant view</button>
+    </div>
+    <div class="row">
+      <label title="Where study recordings and scores are saved">Save to <select id="saveTo">
+        <option value="cloud">Cloudflare</option><option value="local">This Mac (data/)</option></select></label>
+      <input type="password" id="studyKey" placeholder="study key" autocomplete="off" spellcheck="false"
+        title="The study key set in Cloudflare; saved in this browser only" style="width:110px">
     </div>
     <div class="foot" id="studyStatus"></div>
   </div>

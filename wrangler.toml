@@ -1,0 +1,11 @@
+# Cloudflare Pages project for the hosted app (https://posture-buddy.pages.dev). deploy.sh assembles the static site
+# into site/ next to this file and functions/, then deploys. Study data lives in the D1 database below; the API is
+# functions/api/data/[[path]].js, and it needs the STUDY_KEY secret (see README, "Hosted version").
+name = "posture-buddy"
+pages_build_output_dir = "site"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "posture-study"
+database_id = "f9738bfd-f4de-4229-90ec-7d6fe819dbc3"

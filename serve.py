@@ -22,6 +22,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         super().end_headers()
 
+    def do_GET(self):
+        if self.path == "/__study_ping":   # lets the app check it can save study data here
+            self.send_response(204)
+            self.end_headers()
+            return
+        super().do_GET()
+
     def do_POST(self):
         url = urlparse(self.path)
         m = PATH.match(url.path)

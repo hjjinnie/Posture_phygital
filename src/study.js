@@ -1,12 +1,14 @@
 // Study mode: two 22-minute sessions per participant, one with the artifact passive (alive but not reacting) and one
 // active (mirroring posture), in counterbalanced order.
 //
-// Every session records the tracked body landmarks (no video) to data/<participant>/session<N>.jsonl through the
-// local server (serve.py). Scores are never taken from the live run: each session is re-scored from its recording
+// Every session records the tracked body landmarks (no video), saved either to Cloudflare (the hosted app's D1 database,
+// through functions/api/data, protected by the study key) or to data/<participant>/ on this Mac through serve.py.
+// The local app can save to Cloudflare too, so a session that drives the Pi screen still lands in the cloud.
+// Scores are never taken from the live run: each session is re-scored from its recording
 // against the participant's one calibration (taken before their active session), with the same pipeline the live
 // display uses. So a passive first session, which has no calibration, is scored as soon as session 2 is calibrated.
 //
-// Files per participant (data/<participant>/):
+// Files per participant (data/<participant>/ locally, or the same names in the cloud):
 //   session<N>.jsonl        header, events and ~15 landmark frames per second
 //   calibration.json        the baseline used to score both sessions
 //   session<N>_scored.csv   one row per second of the 22 minutes: presence, status (held, or why it was ignored),
@@ -20,15 +22,52 @@ export const ORDERS = { A: ["passive", "active"], B: ["active", "passive"] };   
 export const conditionFor = (order, session) => ORDERS[order][session - 1];
 export const suggestedOrder = pid => (parseInt(pid.replace(/\D/g, ""), 10) || 0) % 2 === 1 ? "A" : "B";   // P01 = A, P02 = B
 
-const dataUrl = (pid, file) => `data/${encodeURIComponent(pid)}/${file}`;
+// ---- storage: Cloudflare ("cloud", needs the study key) or this Mac ("local", serve.py's data/ folder) ----
+export const STORAGE = { mode: "local", key: "", api: "" };
+export function setStorage(mode, key = "", api = "") { Object.assign(STORAGE, { mode, key, api }); }
+const cloud = () => STORAGE.mode === "cloud";
+const dataUrl = (pid, file) => cloud() ? `${STORAGE.api}/api/data/${encodeURIComponent(pid)}/${file}` : `data/${encodeURIComponent(pid)}/${file}`;
+const auth = () => cloud() ? { "X-Study-Key": STORAGE.key } : {};
+function failure(r, what) {
+  return new Error(r.status === 401 ? "wrong or missing study key" : r.status === 503 ? "cloud storage isn't set up yet" : `${what}: HTTP ${r.status}`);
+}
 // mode: append; write (an existing file is kept as a .bak first: raw recordings, calibration); replace (derived files)
 async function save(pid, file, body, mode = "write") {
-  const r = await fetch(`${dataUrl(pid, file)}?mode=${mode}`, { method: "POST", body });
-  if (!r.ok) throw new Error(`saving ${file}: HTTP ${r.status}`);
+  const r = await fetch(`${dataUrl(pid, file)}?mode=${mode}`, { method: "POST", body, headers: auth() });
+  if (!r.ok) throw failure(r, `saving ${file}`);
 }
 async function load(pid, file) {
-  const r = await fetch(dataUrl(pid, file), { cache: "no-store" });
+  const r = await fetch(dataUrl(pid, file), { cache: "no-store", headers: auth() });
+  if (r.status === 401 || r.status === 503) throw failure(r, `reading ${file}`);
   return r.ok ? r : null;
+}
+// Checks the storage works before a session starts. Resolves to a short description, or throws.
+export async function checkStorage() {
+  if (!cloud()) {
+    const r = await fetch("__study_ping", { cache: "no-store" }).catch(() => null);
+    if (!r?.ok) throw new Error("can't save on this Mac: run the app from serve.py");
+    return "saving to this Mac (data/)";
+  }
+  const r = await fetch(`${STORAGE.api}/api/data/`, { cache: "no-store", headers: auth() }).catch(() => null);
+  if (!r) throw new Error("can't reach Cloudflare");
+  if (!r.ok) throw failure(r, "checking cloud storage");
+  return `saving to Cloudflare (${(await r.json()).length} participants so far)`;
+}
+// The files a participant can have, for downloading.
+export const PARTICIPANT_FILES = ["participant.json", "calibration.json", "session1.jsonl", "session2.jsonl",
+  "session1_scored.csv", "session2_scored.csv", "summary.json"];
+export async function downloadParticipant(pid) {
+  let n = 0;
+  for (const file of PARTICIPANT_FILES) {
+    const r = await load(pid, file);
+    if (!r) continue;
+    const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(await r.blob()), download: `${pid}_${file}` });
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+    n++;
+    await new Promise(res => setTimeout(res, 300));   // browsers drop rapid-fire downloads
+  }
+  return n;
 }
 
 // ---- recording ----
@@ -38,7 +77,7 @@ export class Recorder {
   constructor(pid, file) { Object.assign(this, { pid, file, lines: [], written: 0, error: null, timer: null, flushing: false }); }
   async open(header) {
     await save(this.pid, this.file, JSON.stringify({ type: "header", ...header }) + "\n", "write");
-    this.timer = setInterval(() => this.flush(), 1000);
+    this.timer = setInterval(() => this.flush(), cloud() ? 5000 : 1000);   // fewer, bigger writes to the cloud
   }
   event(t, name, extra = {}) { this.lines.push(JSON.stringify({ type: "event", t: r3(t), name, ...extra })); }
   // r: a pose result {lm, world} or null when nobody was found.
@@ -52,12 +91,12 @@ export class Recorder {
     this.flushing = true;
     const batch = this.lines.splice(0);
     try { await save(this.pid, this.file, batch.join("\n") + "\n", "append"); this.written += batch.length; this.error = null; }
-    catch (e) { this.lines.unshift(...batch); this.error = e.message; }   // keep it and retry next second
+    catch (e) { this.lines.unshift(...batch); this.error = e.message; }   // keep it and retry next time
     finally { this.flushing = false; }
   }
   async close() {
     clearInterval(this.timer);
-    for (let i = 0; i < 20 && (this.lines.length || this.flushing); i++) { await this.flush(); if (this.lines.length) await new Promise(r => setTimeout(r, 250)); }
+    for (let i = 0; i < 40 && (this.lines.length || this.flushing); i++) { await this.flush(); if (this.lines.length || this.flushing) await new Promise(r => setTimeout(r, 250)); }
     if (this.lines.length) throw new Error(`could not save the last ${this.lines.length} records: ${this.error}`);
   }
 }
