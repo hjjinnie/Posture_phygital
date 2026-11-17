@@ -52,6 +52,16 @@ page from reaching the Pi's local address; the local app can save study data to 
   session that drives the Pi screen still lands in the cloud. **Download** saves a participant's files.
 - **This Mac (data/)**: only from the local app; files go to `data/<participant>/`.
 
+**Dashboard:** https://posture-buddy.pages.dev/dashboard.html (or **Dashboard ↗** in the Study panel), with the same
+study key. It shows every participant: mean posture score in the passive and active sessions side by side, share of time
+in poor posture, and each session's score over the 22 minutes with the moments the study model ignored. The data comes
+from each participant's `summary.json` and scored CSVs, so it updates as sessions are scored.
+
+**How data is stored:** one shared D1 database for the whole team, keyed by participant ID (each participant's
+`participant.json`, `calibration.json`, `session1.jsonl`/`session2.jsonl`, `session1_scored.csv`/`session2_scored.csv`,
+`summary.json`). Any researcher's browser with the study key reads and writes the same participants, so participant IDs
+must be unique across the team (e.g. a shared ID sheet, or a prefix per researcher).
+
 **Setting the study key** (once, by you; it's never in the code). Choose a long passphrase and run, then type it when asked:
 
 ```bash
@@ -81,6 +91,7 @@ project are in `wrangler.toml`.
 | `src/main.js` | camera, calibration, inference timer, UI |
 | `serve.py` | local web server that keeps the browser from running stale code, and saves study data to `data/` |
 | `functions/api/data/` | the hosted study data API (Cloudflare Pages Function, D1 database), protected by the study key |
+| `dashboard.html`, `src/dashboard.js` | study dashboard: every participant's scores, passive vs active, sessions over time |
 | `deploy.sh`, `wrangler.toml` | publish to Cloudflare Pages |
 | `pi/` | Raspberry Pi screen: `posture_display.py` (receives frames), `screen.html` (full-screen page), `install.sh`, `kiosk.sh` |
 | `esp32/PostureBuddy/` | Arduino sketch for the ESP32-S3 + ST7789 LCD |

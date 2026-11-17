@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Posture Study Dashboard</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --surface-0: #f4f4f2; --surface-1: #fcfcfb; --line: #e2e1dc; --grid: #ecebe7;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #7a7974;
+    --passive: #2a78d6; --active: #eb6834; --link: #1c5cab; --bad: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-0: #121211; --surface-1: #1a1a19; --line: #33332f; --grid: #262624;
+      --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+      --passive: #3987e5; --active: #d95926; --link: #86b6ef; --bad: #e66767;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-0: #121211; --surface-1: #1a1a19; --line: #33332f; --grid: #262624;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --passive: #3987e5; --active: #d95926; --link: #86b6ef; --bad: #e66767;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--surface-0); }
+  .viz-root { min-height: 100vh; background: var(--surface-0); color: var(--text-primary);
+    font: 14px/1.45 -apple-system, system-ui, "Segoe UI", sans-serif; padding: 24px 16px 48px; }
+  main { max-width: 1100px; margin: 0 auto; display: grid; gap: 20px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+  h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  h2 { font-size: 15px; margin: 0 0 4px; font-weight: 600; }
+  .sub { color: var(--text-secondary); font-size: 13px; margin: 0; }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  input, button { font: inherit; color: var(--text-primary); background: var(--surface-1); border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 10px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--text-muted); }
+  .card { background: var(--surface-1); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+  .tile .label { color: var(--text-secondary); font-size: 12px; }
+  .tile .value { font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile .note { color: var(--text-muted); font-size: 12px; }
+  .legend { display: flex; gap: 16px; color: var(--text-secondary); font-size: 12px; margin: 6px 0 4px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+  .chart { position: relative; width: 100%; }
+  .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .chart text { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .chart .label-strong { fill: var(--text-secondary); }
+  .tip { position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 8px; font-size: 12px; color: var(--text-primary); box-shadow: 0 4px 14px rgba(0,0,0,.18); white-space: nowrap; display: none; z-index: 2; }
+  .tip .k { color: var(--text-secondary); }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { color: var(--text-secondary); font-weight: 500; font-size: 12px; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover, tbody tr.sel { background: var(--grid); }
+  .muted { color: var(--text-muted); }
+  .error { color: var(--bad); }
+  .sessions { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .sessions .card h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+  .sessions .card h3 i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  .kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .kv span:nth-child(odd) { color: var(--text-secondary); }
+  @media (max-width: 560px) { .viz-root { padding: 16px; } .tile .value { font-size: 24px; } }
+</style>
+</head>
+<body>
+<div class="viz-root">
+<main>
+  <header>
+    <div>
+      <h1>Posture study</h1>
+      <p class="sub">Each participant's two 22-minute sessions, scored against their calibration. Score: held posture, 0–100 (100 = their calibrated posture).</p>
+    </div>
+    <div class="controls">
+      <input type="password" id="key" placeholder="study key" autocomplete="off" spellcheck="false" style="width:150px">
+      <button id="refresh">Refresh</button>
+      <span class="sub" id="status"></span>
+    </div>
+  </header>
+
+  <section class="tiles" id="tiles"></section>
+
+  <section class="card">
+    <h2>Mean posture score: passive vs active</h2>
+    <p class="sub">One row per participant. Higher is better. Hover a dot for details; click a row in the table below for the session over time.</p>
+    <div class="legend"><span><i style="background:var(--passive)"></i>Passive session</span><span><i style="background:var(--active)"></i>Active session</span></div>
+    <div class="chart" id="dumbbell"></div>
+  </section>
+
+  <section class="card">
+    <h2>Participants</h2>
+    <div class="table-wrap"><table id="table"></table></div>
+  </section>
+
+  <section id="detail" hidden>
+    <div class="card" style="display:grid; gap:14px">
+      <div>
+        <h2 id="detailTitle"></h2>
+        <p class="sub">Held posture score over each session, averaged over 15 s. Gaps are moments the study model ignored (out of view, stretching or reaching, moving quickly, settling back).</p>
+      </div>
+      <div class="legend"><span><i style="background:var(--passive)"></i>Passive session</span><span><i style="background:var(--active)"></i>Active session</span></div>
+      <div class="chart" id="timeline"></div>
+      <div class="sessions" id="sessionCards"></div>
+    </div>
+  </section>
+</main>
+</div>
+<script type="module" src="src/dashboard.js"></script>
+</body>
+</html>
