@@ -408,7 +408,7 @@ $("participantView").onclick = () => participantView(true);
 addEventListener("keydown", e => { if (e.key === "Escape") participantView(false); });
 addEventListener("beforeunload", e => { if (inStudy()) { e.preventDefault(); e.returnValue = ""; } });
 studyControls();
-if (!LOCAL) studyNote(`Hosted version: study recording and the Pi screen ${LOCAL_ONLY}.`);
+if (!LOCAL) studyNote("Hosted version: study recording and the Pi screen need the local app (run python3 serve.py, then open http://localhost:8785).");
 else if ($("pid").value) $("pid").onchange();
 
 // ---- wiring ----

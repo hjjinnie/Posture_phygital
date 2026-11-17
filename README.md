@@ -40,6 +40,19 @@ URL options: `?visual=ema-liquid|ema-contour|ema-dandelion|ema-branching|blob`, 
 `?mainfps=30` (this window's frame rate while streaming), `?zoom=1.5` (a fixed framing for the external screen instead of the automatic one).
 `bench.html` benchmarks the three models on the test photos.
 
+## Hosted version
+
+https://posture-buddy.pages.dev (Cloudflare Pages, free plan) runs the visuals and live posture tracking in Chrome
+with no setup. Study recording and the Raspberry Pi screen need the local app (`python3 serve.py`): study data stays on
+this Mac, and browsers block an https page from reaching the Pi's local address. To publish the latest commit:
+
+```bash
+./deploy.sh
+```
+
+It uploads only committed files (never `data/`), without the Pi, ESP32 and server files. The first run asks you to sign
+in to Cloudflare in the browser.
+
 ## Layout
 
 | file | role |
