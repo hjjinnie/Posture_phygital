@@ -7,6 +7,10 @@ import { VISUALS, DEFAULT_VISUAL } from "./visuals.js";
 import { DisplayLink, TARGETS } from "./display.js";
 
 const q = new URLSearchParams(location.search);
+// Running from serve.py on this machine, or hosted (e.g. Cloudflare Pages)? Study recording saves through serve.py,
+// and browsers block an https page from reaching the Pi's plain ws:// address, so both need the local app.
+const LOCAL = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(location.hostname);
+const LOCAL_ONLY = "needs the local app: run python3 serve.py and open http://localhost:8785";
 const INFER_HZ = +(q.get("hz") || 15);
 if (q.get("studymin")) STUDY.sessionMinutes = +q.get("studymin");   // shorter sessions, for testing the study flow          // posture changes over seconds; 15 Hz leaves room for 60 fps rendering
 const CAL_SECONDS = 1.5;
@@ -275,7 +279,8 @@ $("lcdBtn").onclick = async () => {
   } catch (e) {
     // NotFoundError: the serial picker was cancelled, or this browser (e.g. an embedded preview) can't show one.
     banner(e.name === "NotFoundError" ? "No port chosen. In Chrome or Edge, pick “USB JTAG/serial debug unit”."
-      : display.target === "pi" ? `${e.message}. Is the Pi plugged in and posture_display.py running?` : `LCD: ${e.message}`, 6000);
+      : display.target === "pi" ? (LOCAL ? `${e.message}. Is the Pi plugged in and posture_display.py running?` : `The Pi screen ${LOCAL_ONLY}`)
+      : `LCD: ${e.message}`, 6000);
   }
 };
 
@@ -295,6 +300,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function startSession() {
   if (inStudy()) return;
   const pid = $("pid").value.trim(), session = +$("session").value, order = $("order").value;
+  if (!LOCAL) return studyNote(`Study recording ${LOCAL_ONLY}.`);
   if (!/^[A-Za-z0-9_-]{1,40}$/.test(pid)) return studyNote("Enter a participant ID (letters, digits, - or _).");
   if (!app.source) return studyNote("Start the camera first.");
   if (!engine.ready) return studyNote("Wait for the pose model to load.");
@@ -402,7 +408,8 @@ $("participantView").onclick = () => participantView(true);
 addEventListener("keydown", e => { if (e.key === "Escape") participantView(false); });
 addEventListener("beforeunload", e => { if (inStudy()) { e.preventDefault(); e.returnValue = ""; } });
 studyControls();
-if ($("pid").value) $("pid").onchange();
+if (!LOCAL) studyNote(`Hosted version: study recording and the Pi screen ${LOCAL_ONLY}.`);
+else if ($("pid").value) $("pid").onchange();
 
 // ---- wiring ----
 $("startBtn").onclick = () => setSource($("src").value);
