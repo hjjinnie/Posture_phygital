@@ -27,7 +27,7 @@ Camera frames stay in the browser. The MediaPipe library does send usage metrics
 
 Pick **Flower** or **Jello blob** from the **Visual** dropdown; the external screen follows the choice, and it's remembered.
 
-URL options: `?visual=flower|blob`, `?model=lite|full|heavy` (lite is the default; heavy is more accurate but slower, and calibration is kept per model), `?hz=15` (inference rate), `?tau=45` (seconds for flower health to respond),
+URL options: `?visual=flower|blob`, `?model=lite|full|heavy` (lite is the default; heavy is more accurate but slower, and calibration is kept per model), `?hz=15` (inference rate), `?studymin=22` (study session length, shorten for a dry run),
 `?src=front-man&autocal=1` (run on a test photo instead of the webcam),
 `?display=pi|esp32`, `?pi=10.12.194.1` (the Pi's address), `?connect=1` (connect to the Pi on load), `?dispfps=30`,
 `?mainfps=30` (this window's frame rate while streaming), `?zoom=1.5` (a fixed framing for the external screen instead of the automatic one).
@@ -39,6 +39,9 @@ URL options: `?visual=flower|blob`, `?model=lite|full|heavy` (lite is the defaul
 |---|---|
 | `src/pose.js`, `src/pose-worker.js` | PoseLandmarker (VIDEO mode, GPU delegate), run in a worker so it doesn't hold up the page |
 | `src/posture.js` | landmarks → frontal features → One Euro filter → calibrated severities |
+| `src/pipeline.js` | what the artifact shows: ignores stretching, reaching, quick movement and absences; 4 s held posture; display health |
+| `src/study.js` | study sessions: landmark recording, re-scoring recordings against a calibration, CSV and summary output |
+| `data/` | study recordings and results, one folder per participant (not in git) |
 | `src/visuals.js` | registry of visuals for the **Visual** dropdown; only the selected one is loaded |
 | `src/flower.js` | procedural flower; springs on every parameter |
 | `src/blob.js` | raymarched jello blob (same `setTarget` contract); main view capped at 0.3 MP to keep it fast |
@@ -49,6 +52,51 @@ URL options: `?visual=flower|blob`, `?model=lite|full|heavy` (lite is the defaul
 | `pi/` | Raspberry Pi screen: `posture_display.py` (receives frames), `screen.html` (full-screen page), `install.sh`, `kiosk.sh` |
 | `esp32/PostureBuddy/` | Arduino sketch for the ESP32-S3 + ST7789 LCD |
 | `esp32/lcd_test.py` | sends JPEG files to the board and reports frame rate (needs pyserial) |
+
+## Posture study
+
+Each participant does two 22-minute sessions while working on their laptop: one with the artifact **passive** (neutral,
+only breathing, blinking and swaying, whatever their posture) and one **active** (mirroring their posture), in
+counterbalanced order. Order A is passive → active, order B active → passive; the app suggests A for odd participant
+numbers and B for even ones.
+
+**Running a session** (researcher panel, top right):
+1. Start the camera. Enter the participant ID (e.g. `P01`), check the order, pick session 1 or 2.
+2. Press **Start session**, then **Participant view** to show only the artifact (Esc brings the panel back).
+3. The app runs:
+   - a 5 s **camera check** ("look at the screen and sit as you normally would"), in every session;
+   - **calibration** ("sit tall") before the active session only, so a passive first session never mentions posture;
+   - the **22-minute timer**. At the end it saves everything and says "Session complete".
+
+   **End early** stops a session and keeps what was recorded.
+
+**What's saved** in `data/<participant>/`:
+
+| File | Contents |
+|---|---|
+| `session1.jsonl`, `session2.jsonl` | the tracked body landmarks, about 15 per second (no video), plus events: camera check, calibration, timer start and end |
+| `calibration.json` | the participant's calibration, taken before their active session |
+| `session1_scored.csv`, `session2_scored.csv` | one row per second of the 22 minutes: present, status (held, or why it was ignored), display health, the 4 s average and the held posture's score and metrics |
+| `summary.json` | per session: seconds held, seconds ignored by reason, mean held score, seconds in poor posture, mean and final display health, and the camera check's view of the participant |
+
+Scores always come from the recordings, re-scored against the participant's one calibration with the same code the
+live display uses. So a passive first session is scored as soon as session 2 is calibrated, and **Re-score** redoes a
+participant after any change to the settings in `src/pipeline.js`. Keep the laptop, chair and screen angle the same
+between sessions: scores are relative to where the camera sees the participant, and the camera checks in
+`summary.json` show if that changed.
+
+**How posture becomes the display** (`SETTINGS` in `src/pipeline.js`):
+- **Ignored, and 2 s after while settling back:** out of view; stretching (a wrist above the head); reaching (a wrist
+  out beyond the shoulders); moving quickly (head or shoulders moving fast, lunging toward or away from the screen).
+  Nothing changes while a moment is ignored.
+- **Held posture:** once the posture has been steady for 4 s, its 4 s average counts.
+- **Poor posture** (held score below 0.85): display health falls linearly over time, faster the worse the posture
+  (the worst posture takes it from full to empty in 5 minutes).
+- **Good posture:** a quick jump (30% of what's missing, over 2 s), then a slow linear rise, faster the better the
+  posture (perfect posture fills it from empty in 3 minutes).
+
+The server only accepts data from this machine, and never overwrites a recording or calibration: an earlier file is
+kept as `<name>.<time>.bak`.
 
 ## Raspberry Pi screen (HDMI)
 
@@ -119,7 +167,7 @@ The SPI clock is 80 MHz. If the image shows noise or wrong colours, set `SPI_HZ`
 | Side balance (weight) | shoulder-line tilt + sideways shift | stem leans, pot tips | jelly pools to one side and tips over, turns lemon |
 | Forward head | ear-above-shoulder height ÷ shoulder width shrinks; head grows relative to shoulders; 3D ear-vs-shoulder depth | top of stem nods, bloom droops; head roll tilts the bloom | top lobe swells and droops, turns amber; head roll tilts the face |
 | Shoulders protracted / raised | 3D shoulder span narrows; shoulders rise relative to ears | leaves swing forward / lift and tremble | droplets bud off and rise above it (more and faster when tenser), turns pink |
-| Sustained posture (45 s average) | — | petals open and pink → closed, brown, drooping | floating and smiling → sinks, sags, goes dull, frowns |
+| Sustained posture (display health, see Posture study) | — | petals open and pink → closed, brown, drooping | floating and smiling → sinks, sags, goes dull, frowns |
 
 Severities are relative to your calibration, not absolute angles; [docs/METRICS.md](docs/METRICS.md) explains each one.
 Thresholds are in `TOLERANCE` in `src/posture.js`.

@@ -39,6 +39,11 @@
   details { border-top: 1px solid var(--line); padding-top: 8px; }
   summary { cursor: pointer; color: var(--dim); }
   .slider { display: grid; grid-template-columns: 96px 1fr; gap: 6px; align-items: center; font-size: 12px; color: var(--dim); }
+  .study { border: 1px solid var(--line); border-radius: 8px; padding: 10px; display: grid; gap: 8px; }
+  .study input[type=text] { width: 64px; }
+  #studyStatus { color: var(--text); }
+  body.participant { grid-template-columns: 1fr; }
+  body.participant #panel { display: none; }
   @media (max-width: 760px) { body { grid-template-columns: 1fr; grid-template-rows: 55vh auto; } #panel { border-left: 0; border-top: 1px solid var(--line); } }
 </style>
 </head>
@@ -54,6 +59,21 @@
     <button id="startBtn" class="primary" disabled>Start camera</button>
     <button id="calBtn" disabled>Calibrate (sit tall)</button>
   </div>
+  <div class="study">
+    <div class="row" style="justify-content: space-between"><b>Study</b><span class="foot" id="studyCond"></span></div>
+    <div class="row">
+      <label>Participant <input type="text" id="pid" placeholder="P01" spellcheck="false"></label>
+      <label>Order <select id="order"><option value="A">A: passive → active</option><option value="B">B: active → passive</option></select></label>
+      <label>Session <select id="session"><option>1</option><option>2</option></select></label>
+    </div>
+    <div class="row">
+      <button id="studyStart" class="primary">Start session</button>
+      <button id="studyStop" disabled>End early</button>
+      <button id="studyRescore" title="Re-score this participant's recorded sessions">Re-score</button>
+      <button id="participantView" title="Show only the artifact; press Esc to come back">Participant view</button>
+    </div>
+    <div class="foot" id="studyStatus"></div>
+  </div>
   <div class="row">
     <label>Source <select id="src">
       <option value="webcam">Webcam</option>
@@ -65,9 +85,10 @@
     <label>Visual <select id="visual"></select></label>
   </div>
   <div class="row" style="justify-content: space-between">
-    <div><div class="foot">posture now</div><div id="score">–</div></div>
-    <div style="text-align:right"><div class="foot">health (slow)</div><div id="health" style="font-size:20px">–</div></div>
+    <div><div class="foot">held posture</div><div id="score">–</div></div>
+    <div style="text-align:right"><div class="foot">display health</div><div id="health" style="font-size:20px">–</div></div>
   </div>
+  <div class="foot" id="holdStatus"></div>
   <div id="metrics"></div>
   <div class="foot" id="foot"></div>
   <div class="lcd">

@@ -4,12 +4,12 @@
 // and image y points down. All distances are normalised by shoulder width so the
 // numbers don't change when you sit closer to or further from the camera.
 
-const EAR_L = 7, EAR_R = 8, SH_L = 11, SH_R = 12;
+const EAR_L = 7, EAR_R = 8, SH_L = 11, SH_R = 12, WR_L = 15, WR_R = 16;
 const DEG = 180 / Math.PI;
 
 export function extractFeatures(lm, world, W, H) {
   const P = i => ({ x: (1 - lm[i].x) * W, y: lm[i].y * H, v: lm[i].visibility ?? 1 });
-  const lE = P(EAR_L), rE = P(EAR_R), lS = P(SH_L), rS = P(SH_R);
+  const lE = P(EAR_L), rE = P(EAR_R), lS = P(SH_L), rS = P(SH_R), lW = P(WR_L), rW = P(WR_R);
   const wl = world[SH_L], wr = world[SH_R];
   return {
     conf: Math.min(lE.v, rE.v, lS.v, rS.v),
@@ -23,6 +23,8 @@ export function extractFeatures(lm, world, W, H) {
     // World landmarks are metric, hip-centred, -z toward camera.
     wz: (world[EAR_L].z + world[EAR_R].z - wl.z - wr.z) / 2, // ears ahead of shoulders (<0)
     Sw: Math.hypot(wr.x - wl.x, wr.y - wl.y, wr.z - wl.z),   // 3D shoulder width, m
+    // Wrists (px, with visibility): only used to recognise stretching and reaching, never scored.
+    wrLX: lW.x, wrLY: lW.y, wrLV: lW.v, wrRX: rW.x, wrRY: rW.y, wrRV: rW.v,
   };
 }
 
@@ -117,8 +119,4 @@ export function scorePosture(f, base) {
   };
 }
 
-// Slow "health" of the flower: an exponential average of the score, so brief movements don't punish.
-export class Wellbeing {
-  constructor(tau = 45, start = 0.85) { this.tau = tau; this.value = start; }
-  update(score, dt) { this.value += (1 - Math.exp(-dt / this.tau)) * (score - this.value); return this.value; }
-}
+// Display health over time is in pipeline.js.
