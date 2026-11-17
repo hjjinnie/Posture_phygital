@@ -141,21 +141,42 @@ function renderTable(people) {
   $("table").querySelectorAll("tbody tr").forEach(tr => tr.onclick = () => showDetail(people.find(p => p.pid === tr.dataset.pid)));
 }
 
-// ---- detail: one participant, score over time for each session ----
+// ---- detail: one participant, any metric over time for each session ----
 function parseCsv(text) {
   const [head, ...lines] = text.trim().split("\n");
   const cols = head.split(",");
   return lines.map(l => { const v = l.split(","); return Object.fromEntries(cols.map((c, i) => [c, v[i]])); });
 }
-const BIN = 15;   // seconds
-function bins(rows) {
-  const out = [];
-  for (const r of rows) {
-    const b = Math.floor(+r.t / BIN);
-    out[b] ??= { sum: 0, n: 0 };
-    if (r.status === "held" && r.held_score !== "") { out[b].sum += +r.held_score; out[b].n++; }
-  }
-  return Array.from(out, (b, i) => ({ min: (i * BIN + BIN / 2) / 60, v: b && b.n ? b.sum / b.n : null }));
+
+// Metrics in the scored CSVs. kind: "pct" (0..1 shown as 0-100) or "deg" (signed degrees).
+const METRICS = {
+  score:        { label: "Posture score", kind: "pct", note: "100 = their calibrated posture; higher is better" },
+  sevTrunk:     { label: "Trunk slump", kind: "pct", note: "0 = as calibrated, 100 = clearly slumped or reclined; lower is better" },
+  sevStack:     { label: "Ear–shoulder–hip stack", kind: "pct", note: "0 = as calibrated, 100 = clearly out of line; lower is better" },
+  sevLateral:   { label: "Side balance", kind: "pct", note: "0 = as calibrated, 100 = clearly leaning to one side; lower is better" },
+  sevHead:      { label: "Forward head", kind: "pct", note: "0 = as calibrated, 100 = clearly forward; lower is better" },
+  sevShoulders: { label: "Shoulders", kind: "pct", note: "0 = as calibrated, 100 = clearly rounded forward or raised; lower is better" },
+  health:       { label: "Display health", kind: "pct", noSource: true, note: "the study model's display health (linear decline, recovery); higher is better" },
+  headRoll:     { label: "Head tilt", kind: "deg", note: "degrees from calibration; + = tipped to the participant's right" },
+  shoulderTilt: { label: "Shoulder tilt", kind: "deg", note: "degrees from calibration; + = right shoulder lower" },
+};
+const DIMENSIONS = ["sevTrunk", "sevStack", "sevLateral", "sevHead", "sevShoulders"];
+const view = { p: null, sessions: [], metric: "score", source: "held", bin: 15, all: false };
+$("metric").innerHTML = Object.entries(METRICS).map(([k, m]) => `<option value="${k}">${m.label}</option>`).join("");
+
+// Mean of a metric per time bin. Held: only seconds the study model counted; 4 s average: every second in view.
+function series(metric, source, bin) {
+  const m = METRICS[metric];
+  return view.sessions.map(s => {
+    const col = m.noSource ? metric : `${source}_${metric}`, out = [];
+    for (const r of s.rows) {
+      const b = Math.floor((+r.t - 1) / bin);
+      out[b] ??= { sum: 0, n: 0 };
+      const ok = m.noSource ? true : source === "held" ? r.status === "held" : r.present === "1";
+      if (ok && r[col] !== "" && r[col] != null) { out[b].sum += +r[col]; out[b].n++; }
+    }
+    return { cond: s.cond, n: s.n, points: Array.from(out, (x, i) => ({ min: (i * bin + bin / 2) / 60, v: x && x.n ? x.sum / x.n : null })) };
+  });
 }
 
 async function showDetail(p) {
@@ -163,34 +184,66 @@ async function showDetail(p) {
   $("table").querySelectorAll("tbody tr").forEach(tr => tr.classList.toggle("sel", tr.dataset.pid === p.pid));
   $("detailTitle").textContent = `${p.pid} · order ${p.order === "A" ? "A (passive → active)" : p.order === "B" ? "B (active → passive)" : "?"}`;
   $("timeline").innerHTML = `<p class="muted">Loading…</p>`;
-  const series = [];
+  view.p = p; view.sessions = [];
   for (const cond of ["passive", "active"]) {
     const s = p.sessions[cond];
     if (!s?.scored) continue;
     const text = await api(`${p.pid}/session${s.n}_scored.csv`, "text").catch(() => null);
-    if (text) series.push({ cond, n: s.n, points: bins(parseCsv(text)) });
+    if (text) view.sessions.push({ cond, n: s.n, rows: parseCsv(text) });
   }
-  renderTimeline(series);
+  renderDetailCharts();
   renderSessionCards(p);
   $("detail").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-function renderTimeline(series) {
-  const box = $("timeline");
-  box.replaceChildren();
-  if (!series.length) { box.innerHTML = `<p class="muted">No scored sessions for this participant yet.</p>`; return; }
-  const maxMin = Math.max(22, ...series.flatMap(s => s.points.map(p => p.min)));
-  const vals = series.flatMap(s => s.points.map(p => p.v)).filter(v => v != null);
-  const lo = Math.min(0.5, Math.floor(Math.min(...vals) * 10) / 10);
-  const W = 1000, H = 300, L = 40, R = 70, T = 10, B = 30;
-  const X = m => L + m / maxMin * (W - L - R), Y = v => T + (1 - (v - lo) / (1 - lo)) * (H - T - B);
-  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Posture score over each session" }, box);
-  for (let v = Math.ceil(lo * 10) / 10; v <= 1 + 1e-9; v += 0.1) {
-    el("line", { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: "var(--grid)", "stroke-width": 1 }, svg);
-    el("text", { x: L - 8, y: Y(v) + 4, "text-anchor": "end" }, svg).textContent = Math.round(v * 100);
+function renderDetailCharts() {
+  const m = METRICS[view.metric];
+  $("source").disabled = view.all ? false : !!m.noSource;
+  $("metric").disabled = view.all;
+  const gaps = view.source === "held" ? "Gaps are moments the study model ignored (out of view, stretching or reaching, moving quickly, settling back)." : "Gaps are moments nobody was in view.";
+  const res = view.bin >= 60 ? "1 min" : `${view.bin} s`;
+  $("timeline").hidden = view.all; $("multiples").hidden = !view.all;
+  if (view.all) {
+    $("metricNote").textContent = `Each posture dimension, 0 = as calibrated, 100 = clearly off; lower is better. Averaged over ${res}. ${gaps}`;
+    $("multiples").replaceChildren(...DIMENSIONS.map(k => {
+      const cell = Object.assign(document.createElement("div"), { className: "chart" });
+      cell.innerHTML = `<div class="mtitle">${METRICS[k].label}</div>`;
+      drawLine(cell, series(k, view.source, view.bin), k, view.bin, { height: 190, compact: true });
+      return cell;
+    }));
+  } else {
+    $("metricNote").textContent = `${m.label}: ${m.note}. Averaged over ${res}. ${m.noSource ? "" : gaps}`;
+    $("timeline").replaceChildren();
+    drawLine($("timeline"), series(view.metric, view.source, view.bin), view.metric, view.bin, { height: 300 });
   }
-  for (let m = 0; m <= maxMin; m += 2) el("text", { x: X(m), y: H - 8, "text-anchor": "middle" }, svg).textContent = `${m} min`;
-  for (const s of series) {
+}
+
+// One line chart: both sessions over the 22 minutes, with a crosshair tooltip.
+function drawLine(box, data, metric, bin, { height, compact = false }) {
+  const m = METRICS[metric];
+  if (!data.length) { box.insertAdjacentHTML("beforeend", `<p class="muted">No scored sessions for this participant yet.</p>`); return; }
+  const vals = data.flatMap(s => s.points.map(p => p.v)).filter(v => v != null);
+  if (!vals.length) { box.insertAdjacentHTML("beforeend", `<p class="muted">No data for this metric.</p>`); return; }
+  let lo, hi, step;
+  if (m.kind === "deg") {
+    const a = Math.max(10, Math.ceil(Math.max(...vals.map(Math.abs)) / 5) * 5);
+    lo = -a; hi = a; step = a / 2;
+  } else if (metric === "score" || metric === "health") {
+    lo = Math.min(metric === "health" ? 0 : 0.5, Math.floor(Math.min(...vals) * 10) / 10); hi = 1; step = (hi - lo) > 0.6 ? 0.2 : 0.1;
+  } else {
+    lo = 0; hi = Math.max(0.3, Math.ceil(Math.max(...vals) * 10) / 10); step = hi > 0.6 ? 0.2 : 0.1;
+  }
+  const fmt = v => m.kind === "deg" ? `${v > 0 ? "+" : ""}${Math.round(v)}°` : `${Math.round(v * 100)}`;
+  const maxMin = Math.max(22, ...data.flatMap(s => s.points.map(p => p.min)));
+  const W = compact ? 520 : 1000, H = height, L = compact ? 40 : 40, R = compact ? 12 : 70, T = 10, B = 28;   // small charts drawn at their real size, so text stays legible
+  const X = mm => L + mm / maxMin * (W - L - R), Y = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${m.label} over each session` }, box);
+  for (let v = lo; v <= hi + 1e-9; v += step) {
+    el("line", { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: v === 0 && m.kind === "deg" ? "var(--text-muted)" : "var(--grid)", "stroke-width": 1 }, svg);
+    el("text", { x: L - 8, y: Y(v) + 4, "text-anchor": "end" }, svg).textContent = fmt(v);
+  }
+  for (let mm = 0; mm <= maxMin; mm += compact ? 4 : 2) el("text", { x: X(mm), y: H - 6, "text-anchor": "middle" }, svg).textContent = `${mm} min`;
+  for (const s of data) {
     let d = "", pen = false;
     for (const p of s.points) {
       if (p.v == null) { pen = false; continue; }
@@ -198,30 +251,34 @@ function renderTimeline(series) {
     }
     el("path", { d, fill: "none", stroke: COLOR[s.cond], "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
     const last = [...s.points].reverse().find(p => p.v != null);
-    if (last) el("text", { x: X(last.min) + 8, y: Y(last.v) + 4, class: "label-strong" }, svg).textContent = s.cond;   // direct label
+    if (last && !compact) el("text", { x: X(last.min) + 8, y: Y(last.v) + 4, class: "label-strong" }, svg).textContent = s.cond;   // direct label
   }
-  // crosshair + tooltip
   const cross = el("line", { y1: T, y2: H - B, stroke: "var(--text-muted)", "stroke-width": 1, visibility: "hidden" }, svg);
-  const marks = series.map(s => el("circle", { r: 5, fill: COLOR[s.cond], stroke: "var(--surface-1)", "stroke-width": 2, visibility: "hidden" }, svg));
+  const marks = data.map(s => el("circle", { r: 5, fill: COLOR[s.cond], stroke: "var(--surface-1)", "stroke-width": 2, visibility: "hidden" }, svg));
   const hit = el("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "transparent" }, svg);
   const tip = tooltip(box);
   hit.addEventListener("mousemove", e => {
     const r = svg.getBoundingClientRect(), mx = (e.clientX - r.left) / r.width * W;
-    const i = Math.max(0, Math.round(((mx - L) / (W - L - R) * maxMin * 60 - BIN / 2) / BIN));
-    const m = (i * BIN + BIN / 2) / 60;
-    cross.setAttribute("x1", X(m)); cross.setAttribute("x2", X(m)); cross.setAttribute("visibility", "visible");
-    let html = `<b>${Math.floor(m)}:${String(Math.round((m % 1) * 60)).padStart(2, "0")}</b>`;
-    series.forEach((s, k) => {
+    const i = Math.max(0, Math.round(((mx - L) / (W - L - R) * maxMin * 60 - bin / 2) / bin));
+    const mm = (i * bin + bin / 2) / 60;
+    cross.setAttribute("x1", X(mm)); cross.setAttribute("x2", X(mm)); cross.setAttribute("visibility", "visible");
+    let html = `<b>${m.label} · ${Math.floor(mm)}:${String(Math.round((mm % 1) * 60)).padStart(2, "0")}</b>`;
+    data.forEach((s, k) => {
       const p = s.points[i];
       if (p?.v != null) { marks[k].setAttribute("cx", X(p.min)); marks[k].setAttribute("cy", Y(p.v)); marks[k].setAttribute("visibility", "visible"); }
       else marks[k].setAttribute("visibility", "hidden");
-      html += `<br><span class="k">${s.cond} (session ${s.n})</span> ${p?.v != null ? Math.round(p.v * 100) : "ignored"}`;
+      html += `<br><span class="k">${s.cond} (session ${s.n})</span> ${p?.v != null ? fmt(p.v) : "–"}`;
     });
     const br = box.getBoundingClientRect();
     tip.show(html, e.clientX - br.left, e.clientY - br.top);
   });
   hit.addEventListener("mouseleave", () => { tip.hide(); cross.setAttribute("visibility", "hidden"); marks.forEach(c => c.setAttribute("visibility", "hidden")); });
 }
+
+$("metric").onchange = e => { view.metric = e.target.value; renderDetailCharts(); };
+$("source").onchange = e => { view.source = e.target.value; renderDetailCharts(); };
+$("bin").onchange = e => { view.bin = +e.target.value; renderDetailCharts(); };
+$("allMetrics").onchange = e => { view.all = e.target.checked; renderDetailCharts(); };
 
 function renderSessionCards(p) {
   const card = cond => {

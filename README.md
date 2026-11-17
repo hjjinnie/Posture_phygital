@@ -55,7 +55,10 @@ page from reaching the Pi's local address; the local app can save study data to 
 **Dashboard:** https://posture-buddy.pages.dev/dashboard.html (or **Dashboard ↗** in the Study panel), with the same
 study key. It shows every participant: mean posture score in the passive and active sessions side by side, share of time
 in poor posture, and each session's score over the 22 minutes with the moments the study model ignored. The data comes
-from each participant's `summary.json` and scored CSVs, so it updates as sessions are scored.
+from each participant's `summary.json` and scored CSVs, so it updates as sessions are scored. In a participant's view,
+pick any metric (posture score, trunk slump, ear–shoulder–hip, side balance, forward head, shoulders, display health,
+head and shoulder tilt), the source (**Held**: what the study model counted; **4 s average**: every moment in view) and
+the resolution (5 s, 15 s, 1 min), or tick **All posture dimensions** for a small chart per dimension.
 
 **How data is stored:** one shared D1 database for the whole team, keyed by participant ID (each participant's
 `participant.json`, `calibration.json`, `session1.jsonl`/`session2.jsonl`, `session1_scored.csv`/`session2_scored.csv`,

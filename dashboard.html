@@ -51,6 +51,12 @@
   .chart svg { display: block; width: 100%; height: auto; overflow: visible; }
   .chart text { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
   .chart .label-strong { fill: var(--text-secondary); }
+  select { font: inherit; color: var(--text-primary); background: var(--surface-1); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+  label { color: var(--text-secondary); font-size: 13px; }
+  label.chk { display: inline-flex; gap: 6px; align-items: center; }
+  .multiples { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px 20px; }
+  .multiples .mtitle { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+  @media (max-width: 560px) { .multiples { grid-template-columns: 1fr; } }
   .tip { position: absolute; pointer-events: none; background: var(--surface-1); border: 1px solid var(--line); border-radius: 6px;
     padding: 6px 8px; font-size: 12px; color: var(--text-primary); box-shadow: 0 4px 14px rgba(0,0,0,.18); white-space: nowrap; display: none; z-index: 2; }
   .tip .k { color: var(--text-secondary); }
@@ -104,10 +110,17 @@
     <div class="card" style="display:grid; gap:14px">
       <div>
         <h2 id="detailTitle"></h2>
-        <p class="sub">Held posture score over each session, averaged over 15 s. Gaps are moments the study model ignored (out of view, stretching or reaching, moving quickly, settling back).</p>
+        <div class="controls" style="margin-top:8px">
+          <label>Metric <select id="metric"></select></label>
+          <label>Source <select id="source"><option value="held">Held (study model)</option><option value="avg4">4 s average (all moments)</option></select></label>
+          <label>Resolution <select id="bin"><option value="5">5 s</option><option value="15" selected>15 s</option><option value="60">1 min</option></select></label>
+          <label class="chk"><input type="checkbox" id="allMetrics"> All posture dimensions</label>
+        </div>
+        <p class="sub" id="metricNote" style="margin-top:8px"></p>
       </div>
       <div class="legend"><span><i style="background:var(--passive)"></i>Passive session</span><span><i style="background:var(--active)"></i>Active session</span></div>
       <div class="chart" id="timeline"></div>
+      <div class="multiples" id="multiples" hidden></div>
       <div class="sessions" id="sessionCards"></div>
     </div>
   </section>
