@@ -5,12 +5,14 @@
 // through functions/api/data, protected by the study key) or to data/<participant>/ on this Mac through serve.py.
 // The local app can save to Cloudflare too, so a session that drives the Pi screen still lands in the cloud.
 // Scores are never taken from the live run: each session is re-scored from its recording
-// against the participant's one calibration (taken before their active session), with the same pipeline the live
-// display uses. So a passive first session, which has no calibration, is scored as soon as session 2 is calibrated.
+// against that session's own calibration (taken at its start, in passive and active sessions alike), with the same
+// pipeline the live display uses. Sessions recorded before per-session calibration fall back to the participant's
+// shared calibration.json, or to the other session's calibration.
 //
 // Files per participant (data/<participant>/ locally, or the same names in the cloud):
 //   session<N>.jsonl        header, events and ~15 landmark frames per second
-//   calibration.json        the baseline used to score both sessions
+//   calibration_session<N>.json   the baseline taken at the start of session N, used to score it
+//   calibration.json        (older recordings) one baseline shared by both sessions
 //   session<N>_scored.csv   one row per second of the 22 minutes: presence, status (held, or why it was ignored),
 //                           display health, 4 s average and held posture metrics
 //   summary.json            per-session totals, plus each session's camera check, to spot a changed setup
@@ -54,7 +56,7 @@ export async function checkStorage() {
   return `saving to Cloudflare (${(await r.json()).length} participants so far)`;
 }
 // The files a participant can have, for downloading.
-export const PARTICIPANT_FILES = ["participant.json", "calibration.json", "session1.jsonl", "session2.jsonl",
+export const PARTICIPANT_FILES = ["participant.json", "calibration_session1.json", "calibration_session2.json", "calibration.json", "session1.jsonl", "session2.jsonl",
   "session1_scored.csv", "session2_scored.csv", "summary.json"];
 export async function downloadParticipant(pid) {
   let n = 0;
@@ -151,20 +153,30 @@ function cameraCheck(log) {
   return { frames: feats.length, shoulderWidthPx: m.S, shoulderX: m.shX, shoulderY: m.shY, earY: m.earY, shoulderTiltDeg: m.shTilt, shoulderWidth3dM: m.Sw };
 }
 
-// Re-scores every recorded session of a participant against their calibration and writes the CSVs and summary.
-// Returns a short description of what was written.
+// Re-scores every recorded session of a participant against its calibration and writes the CSVs and summary.
+// Each session uses, in order: its own calibration file, the calibration recorded in its log, the participant's
+// shared calibration.json (older recordings), or the other session's calibration. Returns a short description.
 export async function rescoreParticipant(pid) {
-  const cal = await load(pid, "calibration.json");
-  const calibration = cal ? await cal.json() : null;
-  const summary = { participant: pid, scoredAt: new Date().toISOString(), calibration: calibration && { session: calibration.session, at: calibration.at, model: calibration.model }, settings: SETTINGS, sessions: {} };
+  const json = async f => { const r = await load(pid, f); return r ? r.json() : null; };
+  const own = { 1: await json("calibration_session1.json"), 2: await json("calibration_session2.json") };
+  const shared = await json("calibration.json");
+  const logs = {};
+  for (const n of [1, 2]) { const r = await load(pid, `session${n}.jsonl`); if (r) logs[n] = parseLog(await r.text()); }
+  const fromLog = n => logs[n]?.events.find(e => e.name === "calibrated" && e.baseline)?.baseline;
+  const pickBaseline = n => own[n]?.baseline ? [own[n].baseline, `session ${n}`]
+    : fromLog(n) ? [fromLog(n), `session ${n}`]
+    : shared?.baseline ? [shared.baseline, `shared (session ${shared.session})`]
+    : own[3 - n]?.baseline ? [own[3 - n].baseline, `session ${3 - n}`]
+    : fromLog(3 - n) ? [fromLog(3 - n), `session ${3 - n}`] : [null, null];
+  const summary = { participant: pid, scoredAt: new Date().toISOString(), settings: SETTINGS, sessions: {} };
   const done = [];
   for (const n of [1, 2]) {
-    const r = await load(pid, `session${n}.jsonl`);
-    if (!r) continue;
-    const log = parseLog(await r.text());
-    const info = { condition: log.header?.condition, order: log.header?.order, startedAt: log.header?.startedAt, cameraCheck: cameraCheck(log) };
-    if (calibration) {
-      const scored = scoreSession(log, calibration.baseline);
+    const log = logs[n];
+    if (!log) continue;
+    const [baseline, calibratedFrom] = pickBaseline(n);
+    const info = { condition: log.header?.condition, order: log.header?.order, startedAt: log.header?.startedAt, cameraCheck: cameraCheck(log), calibratedFrom };
+    if (baseline) {
+      const scored = scoreSession(log, baseline);
       if (scored) {
         const cols = ["participant", "session", "condition", "t", "present", "status", "health", ...["avg4", "held"].flatMap(p => FIELDS.map(k => `${p}_${k}`))];
         const meta = { participant: pid, session: n, condition: info.condition };
@@ -173,18 +185,14 @@ export async function rescoreParticipant(pid) {
         Object.assign(info, scored.stats);
         done.push(`session ${n} (${info.condition}, ${scored.rows.length} s)`);
       } else info.note = "no timer start recorded: the session never began";
-    } else info.note = "not scored yet: no calibration for this participant";
+    } else info.note = "not scored yet: no calibration for this session";
     summary.sessions[n] = info;
   }
   await save(pid, "summary.json", JSON.stringify(summary, null, 2), "replace");
-  return done.length ? `Scored ${done.join(" and ")}` : calibration ? "No sessions recorded yet" : "Recorded; will be scored after calibration";
+  return done.length ? `Scored ${done.join(" and ")}` : Object.keys(logs).length ? "Recorded; not scored (no calibration)" : "No sessions recorded yet";
 }
 
-export async function loadCalibration(pid) {
-  const r = await load(pid, "calibration.json");
-  return r ? r.json() : null;
-}
-export const saveCalibration = (pid, data) => save(pid, "calibration.json", JSON.stringify(data, null, 2));
+export const saveCalibration = (pid, session, data) => save(pid, `calibration_session${session}.json`, JSON.stringify(data, null, 2));
 export const saveParticipant = (pid, data) => save(pid, "participant.json", JSON.stringify(data, null, 2), "replace");
 export async function loadParticipant(pid) {
   const r = await load(pid, "participant.json");

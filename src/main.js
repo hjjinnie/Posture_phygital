@@ -1,7 +1,7 @@
 import { PoseEngine, drawSkeleton } from "./pose.js";
 import { extractFeatures, median } from "./posture.js";
 import { PosturePipeline, SETTINGS } from "./pipeline.js";
-import { STUDY, Recorder, conditionFor, suggestedOrder, rescoreParticipant, loadCalibration, saveCalibration,
+import { STUDY, Recorder, conditionFor, suggestedOrder, rescoreParticipant, saveCalibration,
   loadParticipant, saveParticipant, setStorage, checkStorage, downloadParticipant } from "./study.js";
 import { VISUALS, DEFAULT_VISUAL } from "./visuals.js";
 import { DisplayLink, TARGETS, FLIPS } from "./display.js";
@@ -350,19 +350,13 @@ async function startSession() {
   study.rec.event(studyTime(performance.now()), "camera_check_end");
   banner("");
 
-  let baseline = null;
-  if (condition === "active") {
-    study.phase = "calibrating";
-    studyNote("Calibrating. If it fails, press Calibrate (sit tall) again.");
-    baseline = await new Promise(res => { study.calWaiter = res; calibrate(); });
-    if (study.phase !== "calibrating") return;
-    await saveCalibration(study.pid, { participant: study.pid, session, at: new Date().toISOString(), model: engine.model, baseline });
-    study.rec.event(studyTime(performance.now()), "calibrated", { baseline });
-    // A passive first session can be scored now.
-    rescoreParticipant(study.pid).then(msg => studyNote(msg)).catch(e => studyNote(`Re-scoring failed: ${e.message}`));
-  } else {
-    baseline = (await loadCalibration(pid))?.baseline ?? null;   // active-first participants: from session 1
-  }
+  // Calibrate at the start of every session (passive and active); each session is scored against its own calibration.
+  study.phase = "calibrating";
+  studyNote("Calibrating. If it fails, press Calibrate (sit tall) again.");
+  const baseline = await new Promise(res => { study.calWaiter = res; calibrate(); });
+  if (study.phase !== "calibrating") return;
+  await saveCalibration(study.pid, session, { participant: study.pid, session, condition, at: new Date().toISOString(), model: engine.model, baseline });
+  study.rec.event(studyTime(performance.now()), "calibrated", { baseline });
 
   study.phase = "running";
   study.timerStart = performance.now();

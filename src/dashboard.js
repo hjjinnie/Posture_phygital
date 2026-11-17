@@ -38,10 +38,10 @@ async function loadAll() {
         score: s.meanHeldScore, poor: s.secondsHeld ? s.secondsHeldPoor / s.secondsHeld : null,
         ignored: s.seconds ? (s.seconds - s.secondsHeld) / s.seconds : null, present: s.presentShare,
         seconds: s.seconds, ignoredBy: s.secondsIgnored, meanHealth: s.meanHealth, finalHealth: s.finalHealth,
-        cameraCheck: s.cameraCheck, note: s.note,
+        cameraCheck: s.cameraCheck, note: s.note, calibratedFrom: s.calibratedFrom,
       };
     }
-    return { pid: participant, order: info?.order ?? "?", calibratedIn: summary?.calibration?.session, sessions };
+    return { pid: participant, order: info?.order ?? "?", sessions };
   }));
   return people.sort((a, b) => a.pid.localeCompare(b.pid, undefined, { numeric: true }));
 }
@@ -122,10 +122,11 @@ function renderDumbbell(people) {
 // ---- table (also the accessible view of the chart) ----
 function renderTable(people) {
   const status = p => {
-    const s = Object.values(p.sessions);
+    const s = Object.values(p.sessions), scored = s.filter(x => x.scored);
     if (!s.length) return "no sessions";
-    if (!p.calibratedIn) return `session ${s.map(x => x.n).join(", ")} recorded; awaiting calibration`;
-    return s.length === 2 ? "both sessions scored" : `session ${s[0].n} scored`;
+    if (scored.length === 2) return "both sessions scored";
+    if (scored.length === 1) return `session ${scored[0].n} scored` + (s.length > 1 ? `; session ${s.find(x => !x.scored).n} not scored` : "");
+    return `session ${s.map(x => x.n).join(", ")} recorded; not scored`;
   };
   const cell = (s, f) => s ? f(s) : "–";
   $("table").innerHTML = `<thead><tr><th>Participant</th><th>Order</th><th>Passive score</th><th>Passive poor</th>
@@ -296,6 +297,7 @@ function renderSessionCards(p) {
         <span>Ignored: moving quickly</span><span>${mins(ig.movingQuickly)}</span>
         <span>Display health, mean / end</span><span>${score(s.meanHealth)} / ${score(s.finalHealth)}</span>
         <span>Camera check: shoulder width</span><span>${cc ? `${Math.round(cc.shoulderWidthPx)} px` : "–"}</span>
+        <span>Scored against calibration</span><span>${esc(s.calibratedFrom || "–")}</span>
       </div>` : `<p class="muted">${esc(s.note || "Not scored yet.")}</p>`}
       ${s.startedAt ? `<p class="sub" style="margin-top:8px">Started ${new Date(s.startedAt).toLocaleString()}</p>` : ""}</div>`;
   };

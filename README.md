@@ -61,7 +61,7 @@ head and shoulder tilt), the source (**Held**: what the study model counted; **4
 the resolution (5 s, 15 s, 1 min), or tick **All posture dimensions** for a small chart per dimension.
 
 **How data is stored:** one shared D1 database for the whole team, keyed by participant ID (each participant's
-`participant.json`, `calibration.json`, `session1.jsonl`/`session2.jsonl`, `session1_scored.csv`/`session2_scored.csv`,
+`participant.json`, `calibration_session1.json`/`calibration_session2.json`, `session1.jsonl`/`session2.jsonl`, `session1_scored.csv`/`session2_scored.csv`,
 `summary.json`). Any researcher's browser with the study key reads and writes the same participants, so participant IDs
 must be unique across the team (e.g. a shared ID sheet, or a prefix per researcher).
 
@@ -112,7 +112,7 @@ numbers and B for even ones.
 2. Press **Start session**, then **Participant view** to show only the artifact (Esc brings the panel back).
 3. The app runs:
    - a 5 s **camera check** ("look at the screen and sit as you normally would"), in every session;
-   - **calibration** ("sit tall") before the active session only, so a passive first session never mentions posture;
+   - **calibration** ("sit tall") at the start of every session, passive and active;
    - the **22-minute timer**. At the end it saves everything and says "Session complete".
 
    **End early** stops a session and keeps what was recorded.
@@ -122,15 +122,16 @@ numbers and B for even ones.
 | File | Contents |
 |---|---|
 | `session1.jsonl`, `session2.jsonl` | the tracked body landmarks, about 15 per second (no video), plus events: camera check, calibration, timer start and end |
-| `calibration.json` | the participant's calibration, taken before their active session |
+| `calibration_session1.json`, `calibration_session2.json` | the calibration taken at the start of each session |
 | `session1_scored.csv`, `session2_scored.csv` | one row per second of the 22 minutes: present, status (held, or why it was ignored), display health, the 4 s average and the held posture's score and metrics |
 | `summary.json` | per session: seconds held, seconds ignored by reason, mean held score, seconds in poor posture, mean and final display health, and the camera check's view of the participant |
 
-Scores always come from the recordings, re-scored against the participant's one calibration with the same code the
-live display uses. So a passive first session is scored as soon as session 2 is calibrated, and **Re-score** redoes a
-participant after any change to the settings in `src/pipeline.js`. Keep the laptop, chair and screen angle the same
-between sessions: scores are relative to where the camera sees the participant, and the camera checks in
-`summary.json` show if that changed.
+Scores always come from the recordings, each session re-scored against its own calibration with the same code the live
+display uses, as soon as the session ends. **Re-score** redoes a participant after any change to the settings in
+`src/pipeline.js`. (Sessions recorded before per-session calibration fall back to the participant's shared
+`calibration.json`, or to the other session's calibration; the dashboard shows which calibration each session used.)
+Calibrating each session also absorbs small changes in the laptop, chair or screen angle between sessions; the camera
+checks in `summary.json` still show if the setup moved.
 
 **What the artifact shows:** the live posture (smoothed only by the One Euro filter), so it responds within seconds; the
 blob's slow wellness is a 45 s average of the live score. The EMA visuals add their own gentle glide (about half-way in
