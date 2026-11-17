@@ -59,7 +59,7 @@ const loadBaseline = () => { try { return JSON.parse(store(storeKey())); } catch
 const resetPipeline = () => { app.pipeline = app.baseline ? new PosturePipeline(app.baseline) : null; };
 
 // ---- metrics panel ----
-// Bars show the 4 s average; the big number is the held posture's score; health is what the artifact shows.
+// Bars and the big number: the live posture; health: its slow (45 s) average.
 const METRICS = [
   ["sevTrunk", "Trunk slump", s => s.trunk < -0.05 ? "back" : ""],
   ["sevStack", "Ear–shoulder–hip", () => ""],
@@ -71,23 +71,24 @@ $("metrics").innerHTML = METRICS.map(([k, label]) =>
   `<div class="metric"><span class="name">${label}</span><div class="bar"><i id="bar-${k}"></i></div><span class="val" id="val-${k}"></span></div>`).join("");
 const sevColor = x => x < 0.33 ? "var(--good)" : x < 0.66 ? "var(--warn)" : "var(--bad)";
 function renderMetrics() {
-  const p = app.pipeline, s = p?.present ? p.avg : null, h = p?.held;
+  // Live values, the same the artifact shows; the line under them is the study model's status (held, or ignored).
+  const p = app.pipeline, s = p?.liveSeen ? p.live : null;
   for (const [k, , note] of METRICS) {
     const x = s ? s[k] : 0;
     Object.assign($(`bar-${k}`).style, { width: `${Math.round(x * 100)}%`, background: sevColor(x) });
     $(`val-${k}`).textContent = s ? `${note(s)} ${Math.round(x * 100)}` : "";
   }
-  $("score").textContent = h ? Math.round(h.score * 100) : "–";
-  $("score").style.color = h ? sevColor(1 - h.score) : "";
-  $("health").textContent = p ? Math.round(p.health * 100) : "–";
-  $("holdStatus").textContent = p ? p.statusText : "";
+  $("score").textContent = s ? Math.round(s.score * 100) : "–";
+  $("score").style.color = s ? sevColor(1 - s.score) : "";
+  $("health").textContent = p ? Math.round(p.liveHealth * 100) : "–";
+  $("holdStatus").textContent = p ? `study model: ${p.statusText}` : "";
 }
 
 // What the artifact shows: the sliders, the passive artifact, or the held posture and display health.
 function updateTarget() {
   if (manualOn()) return setTarget(manual);
   if (studyMode() === "passive") return setTarget(PASSIVE);
-  setTarget(app.pipeline ? app.pipeline.target() : { ...NEUTRAL, wellbeing: SETTINGS.startHealth, confidence: app.seen ? 1 : 0 });
+  setTarget(app.pipeline ? app.pipeline.liveTarget() : { ...NEUTRAL, wellbeing: SETTINGS.startHealth, confidence: app.seen ? 1 : 0 });
 }
 
 // ---- manual sliders (to design a visual without a camera) ----
@@ -319,10 +320,12 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function startSession() {
   if (inStudy()) return;
   const pid = $("pid").value.trim(), session = +$("session").value, order = $("order").value;
-  if (!/^[A-Za-z0-9_-]{1,40}$/.test(pid)) return studyNote("Enter a participant ID (letters, digits, - or _).");
-  try { await checkStorage(); } catch (e) { return studyNote(`Can't start: ${e.message}.`); }
-  if (!app.source) return studyNote("Start the camera first.");
-  if (!engine.ready) return studyNote("Wait for the pose model to load.");
+  if (!/^[A-Za-z0-9_-]{1,40}$/.test(pid)) return studyError("Enter a participant ID (letters, digits, - or _).");
+  if (!app.source) return studyError("Start the camera first.");
+  if (!engine.ready) return studyError("Wait for the pose model to load.");
+  studyNote("Checking study storage…");
+  try { await checkStorage(); }
+  catch (e) { return studyError(`Can't start: ${e.message}${$("saveTo").value === "cloud" ? " (check the study key)" : ""}.`); }
   const condition = conditionFor(order, session);
   try {
     const existing = await loadParticipant(pid);
@@ -334,7 +337,7 @@ async function startSession() {
       W: overlay.width, H: overlay.height, source: app.srcName, model: engine.model, settings: SETTINGS, study: STUDY });
   } catch (e) {
     study.phase = "idle";
-    return studyNote(`Can't save study data (${e.message}).`);
+    return studyError(`Can't save study data (${e.message}).`);
   }
   study.recording = true;
   app.pipeline = null;   // nothing is shown or scored until the timer starts
@@ -388,7 +391,9 @@ async function endSession(early) {
   studyControls();
 }
 
-function studyNote(text) { study.note = text; renderStudyStatus(performance.now()); }
+function studyNote(text) { study.note = text; study.noteError = false; renderStudyStatus(performance.now()); }
+// A problem the researcher must fix before going on: also shown large on the stage, and in red in the panel.
+function studyError(text) { studyNote(text); study.noteError = true; banner(text, 6000); renderStudyStatus(performance.now()); }
 function studyControls() {
   const busy = inStudy();
   for (const id of ["pid", "order", "session", "studyStart", "studyRescore", "studyDownload", "saveTo", "studyKey"]) $(id).disabled = busy;
@@ -401,6 +406,7 @@ function renderStudyStatus(now) {
     saving: "saving…", done: "done" }[study.phase];
   const rec = study.rec && inStudy() ? ` · ${study.rec.written} records saved` + (study.rec.error ? ` · SAVE ERROR: ${study.rec.error}` : "") : "";
   $("studyStatus").textContent = (phase ? `${study.pid} · ${phase}${rec}` : "") + (study.note ? (phase ? " — " : "") + study.note : "");
+  $("studyStatus").style.color = study.noteError ? "var(--bad)" : "";
 }
 
 $("pid").value = store("study.pid") || "";
@@ -441,9 +447,9 @@ async function applyStorage() {
   const mode = $("saveTo").value;
   $("studyKey").hidden = mode !== "cloud";
   setStorage(mode, $("studyKey").value.trim(), CLOUD_API);
-  if (mode === "cloud" && !$("studyKey").value.trim()) return studyNote("Enter the study key to save to Cloudflare.");
+  if (mode === "cloud" && !$("studyKey").value.trim()) { studyNote("Enter the study key to save to Cloudflare."); study.noteError = true; return; }
   try { studyNote(await checkStorage()); if ($("pid").value) $("pid").onchange(); }
-  catch (e) { studyNote(`Study storage: ${e.message}.`); }
+  catch (e) { studyNote(`Study storage: ${e.message}.`); study.noteError = true; }
 }
 $("saveTo").onchange = () => { store("study.saveTo", $("saveTo").value); applyStorage(); };
 $("studyKey").onchange = () => { store("study.key", $("studyKey").value.trim()); applyStorage(); };

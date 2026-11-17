@@ -5,14 +5,18 @@
 //                  otherwise: One Euro filter -> calibrated posture state (scorePosture)
 //   every second:  if the last 4 s were clean and steady, their average is the "held" posture -> display health
 //
+// The artifact itself follows the live posture (liveTarget), so it responds at once; the held posture, ignored moments
+// and display health below are the study's analysis, recorded every second.
+//
 // Ignored moments (and SETTLE seconds after them) never change anything: the artifact keeps showing the last held
 // posture and its health freezes.
 //
 // Display health (0 = worst, 1 = best):
 //   poor posture   falls linearly with time, faster the worse the posture
 //   good posture   a quick jump when posture turns good, then rises linearly, faster the better the posture
-// What the artifact shows is posture x time: the shape of the last poor posture, as strongly as health has dropped
-// (a poor posture held for 5 minutes shows more than the same posture held for 1), fading as health comes back.
+// What the artifact shows is posture x time: a held poor posture shows at once at half strength, then more strongly as
+// health drops (a poor posture held for 5 minutes shows more than the same posture held for 1), fading as health
+// comes back.
 import { FeatureFilter, scorePosture } from "./posture.js";
 
 export const SETTINGS = {
@@ -32,6 +36,8 @@ export const SETTINGS = {
   improveJumpSeconds: 2,  // ...over this long
   improveSeconds: 180,    // then perfect posture takes health from 0 to 1 in this long (barely good: much slower)
   startHealth: 1,
+  showNow: 0.5,           // target(): a held poor posture shows at once at this share of its strength, then grows
+  liveHealthSeconds: 45,  // liveTarget(): the slow wellness channel is a 45 s average of the live score
 };
 
 // The posture-state fields that are averaged, held and recorded.
@@ -61,6 +67,8 @@ export class PosturePipeline {
     this.poorShape = null;     // the last held poor posture: what the artifact shows, scaled by lost health
     this.status = "starting";
     this.present = false;
+    this.live = null; this.liveT = null; this.liveSeen = false;
+    this.liveHealth = this.cfg.startHealth;   // slow average of the live score (the blob's wilt), as before the study model
   }
 
   // Why this frame should be ignored, or null if it can be scored. raw = extractFeatures(...) output.
@@ -95,9 +103,14 @@ export class PosturePipeline {
     else if (t < this.quietUntil) why = "settling";
     if (why !== "absent") this.lastSeen = t;
     let v = null;
-    if (!why) {
-      v = this.inst = pick(scorePosture(this.filter.apply(raw, t), this.baseline));
-    } else if (raw && raw.conf >= c.minConfidence) this.filter.apply(raw, t);   // keep the filter current
+    if (raw && raw.conf >= c.minConfidence) {
+      // Live posture (filtered only): what the artifact shows, so it responds at once.
+      this.live = pick(scorePosture(this.filter.apply(raw, t), this.baseline));
+      if (this.liveT !== null) this.liveHealth += (1 - Math.exp(-(t - this.liveT) / c.liveHealthSeconds)) * (this.live.score - this.liveHealth);
+      this.liveT = t;
+      if (!why) v = this.inst = this.live;
+    }
+    this.liveSeen = why !== "absent";
     this.frames.push({ t, v, why });
     while (this.frames.length && this.frames[0].t <= t - c.avgSeconds) this.frames.shift();
     const clean = this.frames.filter(f => f.v);
@@ -149,17 +162,34 @@ export class PosturePipeline {
     return r;
   }
 
-  // What the artifact should show in active mode: the last poor posture's shape, scaled so its worst aspect equals the
-  // health lost. Angles (head roll, shoulder tilt) are never exaggerated beyond what was held.
+  // What the artifact shows in active mode: the live posture (filtered only), so it responds at once, as before the
+  // study model; the slow wellness channel is a 45 s average of the live score. The study's held posture, ignored
+  // moments and display health are still computed and recorded (row()), they just don't drive the artifact.
+  liveTarget() {
+    const l = this.live;
+    const shape = l ? { trunk: l.trunk, lateral: l.lateral, head: l.head, headRoll: l.headRoll, shoulderTilt: l.shoulderTilt,
+      protraction: l.protraction, elevL: l.elevL, elevR: l.elevR }
+      : { trunk: 0, lateral: 0, head: 0, headRoll: 0, shoulderTilt: 0, protraction: 0, elevL: 0, elevR: 0 };
+    return { ...shape, wellbeing: this.liveHealth, confidence: this.liveSeen && l ? 1 : 0 };
+  }
+
+  // The study model's view (held posture x time), kept for analysis and as an option. Two parts, the stronger wins:
+  //   now:     the current held poor posture at showNow of its strength (immediate feedback)
+  //   so far:  the last poor posture's shape scaled so its worst aspect equals the health lost (grows with time, and
+  //            fades as good posture restores health)
+  // Angles (head roll, shoulder tilt) are never exaggerated beyond what was held.
   target() {
-    const p = this.poorShape, lost = 1 - this.health;
+    const c = this.cfg, KEYS = ["trunk", "lateral", "head", "protraction", "elevL", "elevR"];
     const shape = { trunk: 0, lateral: 0, head: 0, headRoll: 0, shoulderTilt: 0, protraction: 0, elevL: 0, elevR: 0 };
-    const peak = p ? Math.max(Math.abs(p.trunk), Math.abs(p.lateral), p.head, p.protraction, p.elevL, p.elevR) : 0;
-    if (peak > 1e-3 && lost > 0) {
-      const k = lost / peak, a = Math.min(k, 1);
-      Object.assign(shape, { trunk: p.trunk * k, lateral: p.lateral * k, head: p.head * k, protraction: p.protraction * k,
-        elevL: p.elevL * k, elevR: p.elevR * k, headRoll: p.headRoll * a, shoulderTilt: p.shoulderTilt * a });
-    }
+    const add = (p, k, a) => {
+      for (const key of KEYS) if (Math.abs(p[key] * k) > Math.abs(shape[key])) shape[key] = p[key] * k;
+      for (const key of ["headRoll", "shoulderTilt"]) if (Math.abs(p[key] * a) > Math.abs(shape[key])) shape[key] = p[key] * a;
+    };
+    const now = this.held && this.held.score < c.goodScore ? this.held : null;
+    if (now) add(now, c.showNow, c.showNow);
+    const p = this.poorShape, lost = 1 - this.health;
+    const peak = p ? Math.max(...KEYS.map(key => Math.abs(p[key]))) : 0;
+    if (peak > 1e-3 && lost > 0) { const k = lost / peak; add(p, k, Math.min(k, 1)); }
     return { ...shape, wellbeing: this.health, confidence: this.present ? 1 : 0 };
   }
 }

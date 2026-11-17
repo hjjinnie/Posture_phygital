@@ -118,7 +118,12 @@ participant after any change to the settings in `src/pipeline.js`. Keep the lapt
 between sessions: scores are relative to where the camera sees the participant, and the camera checks in
 `summary.json` show if that changed.
 
-**How posture becomes the display** (`SETTINGS` in `src/pipeline.js`):
+**What the artifact shows:** the live posture (smoothed only by the One Euro filter), so it responds within seconds; the
+blob's slow wellness is a 45 s average of the live score. The EMA visuals add their own gentle glide (about half-way in
+4 s, settled in about 10 s).
+
+**The study model** (`SETTINGS` in `src/pipeline.js`) runs alongside and is what the scored CSVs record every second;
+it doesn't drive the artifact:
 - **Ignored, and 2 s after while settling back:** out of view; stretching (a wrist above the head); reaching (a wrist
   out beyond the shoulders); moving quickly (head or shoulders moving fast, lunging toward or away from the screen).
   Nothing changes while a moment is ignored.
@@ -127,9 +132,8 @@ between sessions: scores are relative to where the camera sees the participant, 
   (the worst posture takes it from full to empty in 5 minutes).
 - **Good posture:** a quick jump (30% of what's missing, over 2 s), then a slow linear rise, faster the better the
   posture (perfect posture fills it from empty in 3 minutes).
-- **What the artifact shows** is posture × time: the shape of the last poor posture, as strongly as display health has
-  dropped. A poor posture held for 5 minutes shows more than the same posture held for 1, and it fades as good posture
-  brings health back.
+- `PosturePipeline.target()` turns this into a posture × time view (the last poor posture, more strongly the longer
+  it's held). It's kept as an option; the artifact uses `liveTarget()`.
 
 The server only accepts data from this machine, and never overwrites a recording or calibration: an earlier file is
 kept as `<name>.<time>.bak`.
@@ -208,7 +212,7 @@ The SPI clock is 80 MHz. If the image shows noise or wrong colours, set `SPI_HZ`
 | Side balance (weight) | shoulder-line tilt + sideways shift | leans and pours toward the lean | stem curves toward the lean | jelly pools to one side and tips over, turns lemon |
 | Forward head | ear-above-shoulder height ÷ shoulder width shrinks; head grows relative to shoulders; 3D ear-vs-shoulder depth | pinched at the waist | head tips forward | top lobe swells and droops, turns amber; head roll tilts the face |
 | Shoulders protracted / raised | 3D shoulder span narrows; shoulders rise relative to ears | frosted and milky | folds into a bud | droplets bud off and rise above it, turns pink |
-| Sustained posture (display health, see Posture study) | — | the shapes above, more strongly the longer a poor posture is held | (same) | (same), and floating and smiling → sinks, sags, goes dull, frowns |
+| Sustained posture (45 s average) | — | — | — | floating and smiling → sinks, sags, goes dull, frowns |
 
 Severities are relative to your calibration, not absolute angles; [docs/METRICS.md](docs/METRICS.md) explains each one.
 Thresholds are in `TOLERANCE` in `src/posture.js`.
