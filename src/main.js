@@ -3,7 +3,7 @@ import { extractFeatures, median } from "./posture.js";
 import { PosturePipeline, SETTINGS } from "./pipeline.js";
 import { STUDY, Recorder, conditionFor, suggestedOrder, rescoreParticipant, loadCalibration, saveCalibration,
   loadParticipant, saveParticipant } from "./study.js";
-import { VISUALS } from "./visuals.js";
+import { VISUALS, DEFAULT_VISUAL } from "./visuals.js";
 import { DisplayLink, TARGETS } from "./display.js";
 
 const q = new URLSearchParams(location.search);
@@ -36,7 +36,7 @@ let visual = null, target = { ...NEUTRAL, wellbeing: SETTINGS.startHealth, confi
 function setTarget(s) { target = s; visual?.setTarget(s); }
 $("visual").innerHTML = Object.entries(VISUALS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join("");
 async function setVisual(name) {
-  if (!VISUALS[name]) name = "flower";
+  if (!VISUALS[name]) name = DEFAULT_VISUAL;
   const Visual = await VISUALS[name].load();
   visual?.dispose();
   visual = app.visual = new Visual($("stage"));
@@ -419,7 +419,7 @@ $("model").onchange = async e => {
   if (!app.baseline && app.source) banner("New model — please recalibrate", 3000);
 };
 
-await setVisual(q.get("visual") || store("visual") || "flower");
+await setVisual(q.get("visual") || store("visual") || DEFAULT_VISUAL);
 
 const model = q.get("model") || "lite";   // lite keeps up best alongside the 3D views; ?model=heavy for accuracy
 $("model").value = model;

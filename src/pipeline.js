@@ -11,6 +11,8 @@
 // Display health (0 = worst, 1 = best):
 //   poor posture   falls linearly with time, faster the worse the posture
 //   good posture   a quick jump when posture turns good, then rises linearly, faster the better the posture
+// What the artifact shows is posture x time: the shape of the last poor posture, as strongly as health has dropped
+// (a poor posture held for 5 minutes shows more than the same posture held for 1), fading as health comes back.
 import { FeatureFilter, scorePosture } from "./posture.js";
 
 export const SETTINGS = {
@@ -56,6 +58,7 @@ export class PosturePipeline {
     this.inst = null; this.avg = null; this.held = null;
     this.health = this.cfg.startHealth;
     this.good = null;          // {jumpLeft, jumpStep} while a good posture is current
+    this.poorShape = null;     // the last held poor posture: what the artifact shows, scaled by lost health
     this.status = "starting";
     this.present = false;
   }
@@ -119,6 +122,7 @@ export class PosturePipeline {
     if (this.status === "held") {
       const s = this.held.score;
       if (s < c.goodScore) {
+        this.poorShape = this.held;
         this.health -= (c.goodScore - s) / c.goodScore / c.declineSeconds;
         this.good = null;
       } else {
@@ -145,12 +149,17 @@ export class PosturePipeline {
     return r;
   }
 
-  // What the artifact should show in active mode.
+  // What the artifact should show in active mode: the last poor posture's shape, scaled so its worst aspect equals the
+  // health lost. Angles (head roll, shoulder tilt) are never exaggerated beyond what was held.
   target() {
-    const h = this.held;
-    const shape = h ? { trunk: h.trunk, lateral: h.lateral, head: h.head, headRoll: h.headRoll, shoulderTilt: h.shoulderTilt,
-      protraction: h.protraction, elevL: h.elevL, elevR: h.elevR }
-      : { trunk: 0, lateral: 0, head: 0, headRoll: 0, shoulderTilt: 0, protraction: 0, elevL: 0, elevR: 0 };
+    const p = this.poorShape, lost = 1 - this.health;
+    const shape = { trunk: 0, lateral: 0, head: 0, headRoll: 0, shoulderTilt: 0, protraction: 0, elevL: 0, elevR: 0 };
+    const peak = p ? Math.max(Math.abs(p.trunk), Math.abs(p.lateral), p.head, p.protraction, p.elevL, p.elevR) : 0;
+    if (peak > 1e-3 && lost > 0) {
+      const k = lost / peak, a = Math.min(k, 1);
+      Object.assign(shape, { trunk: p.trunk * k, lateral: p.lateral * k, head: p.head * k, protraction: p.protraction * k,
+        elevL: p.elevL * k, elevR: p.elevR * k, headRoll: p.headRoll * a, shoulderTilt: p.shoulderTilt * a });
+    }
     return { ...shape, wellbeing: this.health, confidence: this.present ? 1 : 0 };
   }
 }

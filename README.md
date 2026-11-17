@@ -1,16 +1,22 @@
 # Posture Buddy
 
 Real-time sitting-posture tracking from a laptop's front webcam (MediaPipe Pose Landmarker, lite by default),
-rendered as a 3D visual (three.js) that mirrors your body: a flower or a jello blob. The same picture can stream to a
-Raspberry Pi's HDMI screen (or a small ESP32-S3 LCD).
+rendered as an animated artifact that mirrors your body: the EMA liquid metaball or dandelion, or a jello blob. The same
+picture can stream to a Raspberry Pi's HDMI screen (or a small ESP32-S3 LCD).
 
 ![The app running on a test photo, with the jello blob selected](docs/app.jpg)
 
-| Flower | Jello blob |
-|---|---|
-| ![Flower in six posture states](docs/flower-states.jpg) | ![Jello blob in six posture states](docs/blob-states.jpg) |
+| EMA: liquid metaball | EMA: dandelion | Jello blob |
+|---|---|---|
+| ![EMA liquid metaball in six posture states](docs/ema-liquid-states.jpg) | ![EMA dandelion in six posture states](docs/ema-dandelion-states.jpg) | ![Jello blob in six posture states](docs/blob-states.jpg) |
 
-Both grids show the same six states: upright, slumped, forward head, leaning right, shoulders shrugged, and poor posture for minutes.
+Each grid shows the same six states: upright, slumped, forward head, leaning right, shoulders shrugged, and poor posture for minutes.
+
+The EMA (Embodied Mindful Aesthetics) visuals are by Jihoon Park, from
+[jihoonpark-mde/ema-visualization](https://github.com/jihoonpark-mde/ema-visualization) (private), ported into
+`src/ema.js` with their rendering, motion and desk-time model unchanged. Each comes in two styles: liquid or contour-line
+metaball, and single or branching dandelion. Their desk-time model adds a metaball (or seed cluster) for every 20 minutes
+at the desk; in this app the camera frames the form as it is now, so it fills the screen from the first minute.
 
 ## Run
 
@@ -25,9 +31,10 @@ python3 serve.py
 Open http://localhost:8785, press **Start camera**, sit tall, and press **Calibrate**.
 Camera frames stay in the browser. The MediaPipe library does send usage metrics to Google (see its README).
 
-Pick **Flower** or **Jello blob** from the **Visual** dropdown; the external screen follows the choice, and it's remembered.
+Pick a visual from the **Visual** dropdown (EMA liquid metaball by default); the external screen follows the choice, and
+it's remembered.
 
-URL options: `?visual=flower|blob`, `?model=lite|full|heavy` (lite is the default; heavy is more accurate but slower, and calibration is kept per model), `?hz=15` (inference rate), `?studymin=22` (study session length, shorten for a dry run),
+URL options: `?visual=ema-liquid|ema-contour|ema-dandelion|ema-branching|blob`, `?model=lite|full|heavy` (lite is the default; heavy is more accurate but slower, and calibration is kept per model), `?hz=15` (inference rate), `?studymin=22` (study session length, shorten for a dry run),
 `?src=front-man&autocal=1` (run on a test photo instead of the webcam),
 `?display=pi|esp32`, `?pi=10.12.194.1` (the Pi's address), `?connect=1` (connect to the Pi on load), `?dispfps=30`,
 `?mainfps=30` (this window's frame rate while streaming), `?zoom=1.5` (a fixed framing for the external screen instead of the automatic one).
@@ -43,9 +50,8 @@ URL options: `?visual=flower|blob`, `?model=lite|full|heavy` (lite is the defaul
 | `src/study.js` | study sessions: landmark recording, re-scoring recordings against a calibration, CSV and summary output |
 | `data/` | study recordings and results, one folder per participant (not in git) |
 | `src/visuals.js` | registry of visuals for the **Visual** dropdown; only the selected one is loaded |
-| `src/flower.js` | procedural flower; springs on every parameter |
+| `src/ema.js` | EMA visuals (liquid/contour metaball, single/branching dandelion), by Jihoon Park; framed to the form's current size |
 | `src/blob.js` | raymarched jello blob (same `setTarget` contract); main view capped at 0.3 MP to keep it fast |
-| `blob-prototype/` | side-by-side flower vs. blob comparison page with presets and a state gallery |
 | `src/display.js` | renders the selected visual's view for an external screen and streams it as JPEG frames: WebSocket to the Pi, or Web Serial to the ESP32 |
 | `src/main.js` | camera, calibration, inference timer, UI |
 | `serve.py` | local web server that keeps the browser from running stale code |
@@ -94,6 +100,9 @@ between sessions: scores are relative to where the camera sees the participant, 
   (the worst posture takes it from full to empty in 5 minutes).
 - **Good posture:** a quick jump (30% of what's missing, over 2 s), then a slow linear rise, faster the better the
   posture (perfect posture fills it from empty in 3 minutes).
+- **What the artifact shows** is posture × time: the shape of the last poor posture, as strongly as display health has
+  dropped. A poor posture held for 5 minutes shows more than the same posture held for 1, and it fades as good posture
+  brings health back.
 
 The server only accepts data from this machine, and never overwrites a recording or calibration: an earlier file is
 kept as `<name>.<time>.bak`.
@@ -104,11 +113,11 @@ The Mac still does the tracking and 3D rendering; the Pi only shows the frames, 
 Frames are ~0.5-megapixel JPEGs (~7–9 KB each) sent over a WebSocket; the Pi's Chromium decodes and scales them on its
 GPU. The screen page reports its size, so the frames match its shape (544×960 on a portrait 1080×1920 panel).
 
-The shot frames itself every frame from the visual's own geometry (the blob's spheres, every vertex of the flower):
-up to 2× closer than the LCD framing while the visual is compact, widening in the same frame whenever anything would
-come within 7.5% of an edge, then easing back in. Nothing is ever cut off: checked frame by frame through sudden
-switches between extreme postures, nothing came closer than that margin, on the Pi and on the ESP32's 4:3 LCD.
-`?zoom=1.5` fixes the shot instead.
+Every visual frames itself so it fills the screen without being cut off. The EMA visuals frame the form as it is now
+(about three-quarters of the screen, easing as it changes; ~29 fps for the liquid metaball on a portrait screen). The
+blob frames itself from its own geometry: up to 2× closer than its LCD framing while compact, widening in the same frame
+whenever anything would come within 7.5% of an edge (checked frame by frame through sudden switches between extreme
+postures, on the Pi and on the ESP32's 4:3 LCD); `?zoom=1.5` fixes the blob's shot instead.
 Nothing needs installing on the Pi beyond Raspberry Pi OS with desktop (the server is standard-library Python).
 
 **One-time setup on the Pi** (Raspberry Pi 5, Raspberry Pi OS Trixie with desktop):
@@ -139,7 +148,7 @@ draws each frame in 3–5 ms.
 
 The computer does all the tracking and 3D rendering; the board only decodes and displays.
 Each frame is a ~3–6 KB JPEG sent over the USB cable. On an ESP32-S3 N16R8 + Waveshare 2" ST7789 it runs at
-~28 fps for the flower and ~32 fps for the blob (decode + draw 20–22 ms per frame); the page sends 20 fps. When the stream stops, the last frame stays on screen;
+~32 fps for the blob (decode + draw 20–22 ms per frame); the page sends 20 fps. When the stream stops, the last frame stays on screen;
 at power-on the screen shows "loading..." until the first frame arrives.
 
 1. Wire the LCD: DIN→GPIO11, CLK→GPIO12, CS→GPIO10, DC→GPIO9, RST→GPIO8, VCC→3V3, GND→GND, BL→3V3.
@@ -160,14 +169,14 @@ The SPI clock is 80 MHz. If the image shows noise or wrong colours, set `SPI_HZ`
 
 ## Body → visual
 
-| posture dimension | frontal-camera signal | flower | jello blob |
-|---|---|---|---|
-| Trunk slump / recline (spine ⟂ thighs) | shoulders sink + get nearer the camera | stem bends forward/back as a C-curve | curls into a bean and turns indigo / arches back and turns sky blue |
-| Ear–shoulder–hip stack | hips aren't visible, so inferred from head + trunk | (combined) | (combined) |
-| Side balance (weight) | shoulder-line tilt + sideways shift | stem leans, pot tips | jelly pools to one side and tips over, turns lemon |
-| Forward head | ear-above-shoulder height ÷ shoulder width shrinks; head grows relative to shoulders; 3D ear-vs-shoulder depth | top of stem nods, bloom droops; head roll tilts the bloom | top lobe swells and droops, turns amber; head roll tilts the face |
-| Shoulders protracted / raised | 3D shoulder span narrows; shoulders rise relative to ears | leaves swing forward / lift and tremble | droplets bud off and rise above it (more and faster when tenser), turns pink |
-| Sustained posture (display health, see Posture study) | — | petals open and pink → closed, brown, drooping | floating and smiling → sinks, sags, goes dull, frowns |
+| posture dimension | frontal-camera signal | EMA liquid metaball | EMA dandelion | jello blob |
+|---|---|---|---|---|
+| Trunk slump / recline (spine ⟂ thighs) | shoulders sink + get nearer the camera | flows down into a puddle | stem hooks over, head hangs | curls into a bean and turns indigo / arches back and turns sky blue |
+| Ear–shoulder–hip stack | hips aren't visible, so inferred from head + trunk | metaballs scatter | seeds drift away | (combined) |
+| Side balance (weight) | shoulder-line tilt + sideways shift | leans and pours toward the lean | stem curves toward the lean | jelly pools to one side and tips over, turns lemon |
+| Forward head | ear-above-shoulder height ÷ shoulder width shrinks; head grows relative to shoulders; 3D ear-vs-shoulder depth | pinched at the waist | head tips forward | top lobe swells and droops, turns amber; head roll tilts the face |
+| Shoulders protracted / raised | 3D shoulder span narrows; shoulders rise relative to ears | frosted and milky | folds into a bud | droplets bud off and rise above it, turns pink |
+| Sustained posture (display health, see Posture study) | — | the shapes above, more strongly the longer a poor posture is held | (same) | (same), and floating and smiling → sinks, sags, goes dull, frowns |
 
 Severities are relative to your calibration, not absolute angles; [docs/METRICS.md](docs/METRICS.md) explains each one.
 Thresholds are in `TOLERANCE` in `src/posture.js`.
@@ -177,7 +186,7 @@ see [test-images/CREDITS.md](test-images/CREDITS.md).
 
 ## README images
 
-`docs/shots.html?visual=flower` and `?visual=blob` draw the state grids. With the server running:
+`docs/shots.html?visual=ema-liquid`, `?visual=ema-dandelion` and `?visual=blob` draw the state grids. With the server running:
 
 ```bash
 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --hide-scrollbars --window-size=1200,680 --virtual-time-budget=30000 --screenshot=blob-states.png "http://localhost:8785/docs/shots.html?visual=blob"

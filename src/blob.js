@@ -1,4 +1,4 @@
-// Jello blob prototype: same setTarget() contract as src/flower.js, different body.
+// Jello blob: a raymarched jelly that mirrors the sitter's posture (setTarget() contract in visuals.js).
 //
 //   spine of 5 spheres      = trunk + neck (collapsed to one point = perfect sphere, curled = bean, tapered + rolled = leaning pear)
 //   top sphere + face       = head (forward head swells and droops it, head roll tilts the face)

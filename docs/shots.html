@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- Renders the README state grids: docs/shots.html?visual=flower|blob. See "README images" in README.md. -->
+<!-- Renders the README state grids: docs/shots.html?visual=blob|ema-liquid|ema-dandelion|... See "README images" in README.md. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -33,10 +33,10 @@ const STATES = [
 ];
 const CW = 400, CH = 340, COLS = 3, SS = 2;   // cell size, columns, supersampling
 
-const name = new URLSearchParams(location.search).get("visual") || "flower";
+const name = new URLSearchParams(location.search).get("visual") || "blob";
 const Visual = await VISUALS[name].load();
 const v = new Visual(document.getElementById("stage"), { pixelRatio: SS, maxPixels: Infinity });
-v.renderer.setPixelRatio(SS); v.resize();
+v.renderer.setPixelRatio?.(SS); v.resize();
 
 const out = document.getElementById("out");
 out.width = CW * COLS; out.height = CH * Math.ceil(STATES.length / COLS);

@@ -1,12 +1,20 @@
 // The posture visuals the app can show. Each one takes a container and implements:
 //   setTarget(state)  step(dt, time)  render()  renderLcd(renderer)  dispose()
-// and exposes `scene`, `camera`, `renderer`. Modules load on first use, so only the chosen one costs anything.
+// and exposes `lcdCamera` (the external screen's view). Modules load on first use, so only the chosen one costs anything.
 import * as THREE from "three";
 
+// EMA visuals (src/ema.js) are by Jihoon Park, from jihoonpark-mde/ema-visualization.
+const ema = surface => () => import("./ema.js").then(m => class extends m.EmaVisual {
+  constructor(container, opts) { super(container, { ...opts, surface }); }
+});
 export const VISUALS = {
-  flower: { label: "Flower", load: () => import("./flower.js").then(m => m.Flower) },
+  "ema-liquid": { label: "EMA: liquid metaball", load: ema("liquid") },
+  "ema-contour": { label: "EMA: contour metaball", load: ema("contour") },
+  "ema-dandelion": { label: "EMA: dandelion", load: ema("dandelion") },
+  "ema-branching": { label: "EMA: branching dandelion", load: ema("branching") },
   blob: { label: "Jello blob", load: () => import("./blob.js").then(m => m.JelloBlob) },
 };
+export const DEFAULT_VISUAL = "ema-liquid";
 
 const BLACK = new THREE.Color(0x000000);
 
