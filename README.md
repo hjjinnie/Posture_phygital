@@ -195,7 +195,8 @@ Nothing needs installing on the Pi beyond Raspberry Pi OS with desktop (the serv
 the Pi hands computers only 12 addresses, each held for an hour, and every replug or restart takes a new one, so after a
 dozen moves between laptops no computer gets an address ("no address available" in the Pi's log) and the cable link
 looks plugged in but dead. The script widens the pool to 240 addresses with 2-minute leases and clears old leases at
-every boot. The Pi stays at `10.12.194.1`.
+every boot. It also turns off rpi-usb-gadget's internet-sharing switcher, which otherwise moves the Pi off
+`10.12.194.1` whenever a computer shares its internet over the cable, so the Pi is at `10.12.194.1` on every computer.
 
 **Orientation:** projected from above (the screen reflected in glass), the picture is seen mirrored, so the stream is
 flipped vertically by default. **Orientation** next to **Screen** offers Normal, Flip vertical, Flip horizontal and
