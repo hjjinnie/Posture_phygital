@@ -206,18 +206,50 @@ export class DisplayLink {
 // ---- Raspberry Pi: WebSocket over the USB-gadget network link (or Wi-Fi) ----
 export const PI_PORT = 8790;
 
+// From the hosted (https) site, Chrome and Edge let the page reach the Pi's plain ws:// address once the person allows
+// the site "local network access" (Chrome asks the first time). Firefox and Safari refuse outright. The local app
+// (http://localhost) needs no permission.
+const LNA_NAMES = ["local-network", "local-network-access"];   // Chrome 14x+ name first, then the earlier single one
+async function localNetworkPermission() {
+  if (!window.isSecureContext || ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname)) return "not needed";
+  for (const name of LNA_NAMES) {
+    try { return (await navigator.permissions.query({ name })).state; } catch {}
+  }
+  return "unknown";
+}
+export const LNA_HELP = "Chrome is blocking this site from the Pi: click the icon left of the address bar, " +
+  "set Local network access to Allow, reload, then press Connect again";
+
 class PiTransport {
-  constructor(host = "10.12.194.1") { this.host = host; this.ws = null; this.size = null; this.note = ""; this.onclose = this.onsize = () => {}; }
+  constructor(host = "10.12.194.1") {
+    this.host = host; this.ws = null; this.size = null; this.note = "";
+    this.onclose = this.onsize = () => {};
+    this.onwait = () => {};   // called with a message while the browser is asking the person for permission
+  }
   get supported() { return true; }
   get connected() { return this.ws?.readyState === WebSocket.OPEN; }
   get maxInflight() { return 3; }
   canSend() { return this.ws.bufferedAmount < 256 * 1024; }   // back off if the link falls behind
 
-  connect() {
+  async connect() {
+    const before = await localNetworkPermission();
+    if (before === "denied") throw new Error(LNA_HELP);
+    // While Chrome's permission prompt is open the connection waits on the person, so give them time to answer.
+    if (before === "prompt") this.onwait("Chrome is asking to let this site reach devices on your local network (the Pi): click Allow");
+    const waitMs = before === "prompt" ? 60000 : 5000;
+    let ws;
+    try { ws = new WebSocket(`ws://${this.host}:${PI_PORT}/source`); }
+    catch (e) {   // Firefox and Safari: a secure page may not open a plain ws:// connection at all
+      throw new Error(`this browser won't let the website reach the Pi (${e.name}). Use Chrome or Edge, or the local app`);
+    }
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(`ws://${this.host}:${PI_PORT}/source`);
-      const fail = () => { clearTimeout(timer); ws.close(); reject(new Error(`can't reach the Pi at ${this.host}:${PI_PORT}`)); };
-      const timer = setTimeout(fail, 4000);
+      const fail = async () => {
+        clearTimeout(timer); ws.onerror = ws.onopen = null; ws.close();
+        const after = await localNetworkPermission();
+        reject(new Error(after === "denied" ? LNA_HELP
+          : `can't reach the Pi at ${this.host}:${PI_PORT}. Is the Pi's USB-C cable plugged into this computer, and has the Pi finished starting?`));
+      };
+      const timer = setTimeout(fail, waitMs);
       ws.onerror = fail;
       ws.onopen = () => {
         clearTimeout(timer);

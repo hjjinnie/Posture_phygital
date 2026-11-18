@@ -7,10 +7,9 @@ import { VISUALS, DEFAULT_VISUAL } from "./visuals.js";
 import { DisplayLink, TARGETS, FLIPS } from "./display.js";
 
 const q = new URLSearchParams(location.search);
-// Running from serve.py on this machine, or hosted (e.g. Cloudflare Pages)? Study recording saves through serve.py,
-// and browsers block an https page from reaching the Pi's plain ws:// address, so both need the local app.
+// Running from serve.py on this machine, or hosted (e.g. Cloudflare Pages)? Saving study data to this computer needs
+// serve.py; the Pi screen works from both (the hosted site asks for Chrome's local network permission, see display.js).
 const LOCAL = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(location.hostname);
-const LOCAL_ONLY = "needs the local app: run python3 serve.py and open http://localhost:8785";
 // Study data in the cloud: the hosted site's own API, or the same API from the local app (?api= overrides, for testing).
 const CLOUD_API = q.has("api") ? q.get("api") : LOCAL ? "https://posture-buddy.pages.dev" : "";
 const INFER_HZ = +(q.get("hz") || 15);
@@ -271,6 +270,7 @@ function setDisplay(target) {
   display?.dispose();
   display = app.display = new DisplayLink(target, { host: $("piHost").value.trim(), ...(q.get("dispfps") && { fps: +q.get("dispfps") }), ...(q.get("zoom") && { zoom: q.get("zoom") === "auto" ? "auto" : +q.get("zoom") }) });
   display.visual = visual;
+  if (target === "pi") display.transport.onwait = msg => banner(msg, 60000);
   $("lcdPreview").replaceChildren(display.canvas);
   $("dispTarget").value = target;
   $("piHost").hidden = target !== "pi";
@@ -279,7 +279,7 @@ function setDisplay(target) {
   store("display", target);
 }
 setDisplay(q.get("display") || store("display"));
-if (q.get("connect") === "1" && display.target === "pi") display.connect().catch(e => banner(e.message, 6000));  // no picker needed
+if (q.get("connect") === "1" && display.target === "pi") display.connect().then(() => banner(""), e => banner(e.message, 10000));  // no picker needed
 
 function renderDisplayStatus() {
   const s = display.stats;
@@ -296,11 +296,12 @@ $("lcdBtn").onclick = async () => {
   try {
     if (display.target === "pi") display.transport.host = $("piHost").value.trim();
     display.connected ? await display.disconnect() : await display.connect();
+    banner("");
   } catch (e) {
     // NotFoundError: the serial picker was cancelled, or this browser (e.g. an embedded preview) can't show one.
     banner(e.name === "NotFoundError" ? "No port chosen. In Chrome or Edge, pick “USB JTAG/serial debug unit”."
-      : display.target === "pi" ? (LOCAL ? `${e.message}. Is the Pi plugged in and posture_display.py running?` : `The Pi screen ${LOCAL_ONLY}`)
-      : `LCD: ${e.message}`, 6000);
+      : display.target === "pi" ? `Pi screen: ${e.message}`
+      : `LCD: ${e.message}`, 12000);
   }
 };
 
@@ -463,7 +464,6 @@ $("studyKeyShow").onclick = () => {
   $("studyKeyShow").textContent = show ? "Hide" : "Show";
 };
 applyStorage();
-if (!LOCAL) setTimeout(() => { if (!inStudy()) banner("Hosted version: the Pi screen needs the local app (python3 serve.py, then http://localhost:8785)", 6000); }, 1500);
 
 // ---- wiring ----
 $("startBtn").onclick = () => setSource($("src").value);
