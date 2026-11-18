@@ -390,7 +390,7 @@ function studyNote(text) { study.note = text; study.noteError = false; renderStu
 function studyError(text) { studyNote(text); study.noteError = true; banner(text, 6000); renderStudyStatus(performance.now()); }
 function studyControls() {
   const busy = inStudy();
-  for (const id of ["pid", "order", "session", "studyStart", "studyRescore", "studyDownload", "saveTo", "studyKey"]) $(id).disabled = busy;
+  for (const id of ["pid", "order", "session", "studyStart", "studyRescore", "studyDownload", "saveTo", "studyKey", "studyKeyShow"]) $(id).disabled = busy;
   $("studyStop").disabled = !busy || study.phase === "saving";
   $("studyCond").textContent = `Session ${$("session").value}: ${conditionFor($("order").value, +$("session").value)}`;
 }
@@ -439,7 +439,7 @@ $("saveTo").value = LOCAL && store("study.saveTo") === "local" ? "local" : "clou
 $("studyKey").value = store("study.key") || "";
 async function applyStorage() {
   const mode = $("saveTo").value;
-  $("studyKey").hidden = mode !== "cloud";
+  $("studyKey").hidden = $("studyKeyShow").hidden = mode !== "cloud";
   setStorage(mode, $("studyKey").value.trim(), CLOUD_API);
   if (mode === "cloud" && !$("studyKey").value.trim()) { studyNote("Enter the study key to save to Cloudflare."); study.noteError = true; return; }
   try { studyNote(await checkStorage()); if ($("pid").value) $("pid").onchange(); }
@@ -447,6 +447,11 @@ async function applyStorage() {
 }
 $("saveTo").onchange = () => { store("study.saveTo", $("saveTo").value); applyStorage(); };
 $("studyKey").onchange = () => { store("study.key", $("studyKey").value.trim()); applyStorage(); };
+$("studyKeyShow").onclick = () => {
+  const show = $("studyKey").type === "password";
+  $("studyKey").type = show ? "text" : "password";
+  $("studyKeyShow").textContent = show ? "Hide" : "Show";
+};
 applyStorage();
 if (!LOCAL) setTimeout(() => { if (!inStudy()) banner("Hosted version: the Pi screen needs the local app (python3 serve.py, then http://localhost:8785)", 6000); }, 1500);
 

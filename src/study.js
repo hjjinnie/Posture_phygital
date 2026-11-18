@@ -25,15 +25,20 @@ export const conditionFor = (order, session) => ORDERS[order][session - 1];
 export const suggestedOrder = pid => (parseInt(pid.replace(/\D/g, ""), 10) || 0) % 2 === 1 ? "A" : "B";   // P01 = A, P02 = B
 
 // ---- storage: Cloudflare ("cloud", needs the study key) or this Mac ("local", serve.py's data/ folder) ----
+// Study keys are compared after the same clean-up on both sides (browser and Cloudflare), so invisible differences
+// don't lock anyone out: Unicode normalised (NFKC), case ignored, zero-width characters dropped, any run of spaces
+// (including non-breaking ones from copy-paste) counted as one space, and spaces at the ends trimmed.
+export const normalizeKey = k => String(k || "").normalize("NFKC").replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+  .replace(/\s+/g, " ").trim().toLowerCase();
 export const STORAGE = { mode: "local", key: "", api: "" };
-export function setStorage(mode, key = "", api = "") { Object.assign(STORAGE, { mode, key, api }); }
+export function setStorage(mode, key = "", api = "") { Object.assign(STORAGE, { mode, key: normalizeKey(key), api }); }
 const cloud = () => STORAGE.mode === "cloud";
 const dataUrl = (pid, file) => cloud() ? `${STORAGE.api}/api/data/${encodeURIComponent(pid)}/${file}` : `data/${encodeURIComponent(pid)}/${file}`;
 const auth = () => cloud() ? { "X-Study-Key": STORAGE.key } : {};
 // Says exactly why cloud storage refused, so a problem on another computer can be told apart from a wrong key.
 function failure(r, what) {
   const here = location.origin.startsWith("http") ? location.origin : "a file opened directly";
-  if (r.status === 401) return new Error("the study key doesn't match the one set in Cloudflare (it's case-sensitive)");
+  if (r.status === 401) return new Error("the study key doesn't match the one set in Cloudflare (capitals and extra spaces don't matter, so check the letters and words; press Show to see what's typed)");
   if (r.status === 403) return new Error(`this address (${here}) isn't allowed to use study storage: open https://posture-buddy.pages.dev, or the local app at http://localhost:8785`);
   if (r.status === 503) return new Error("cloud storage isn't set up on this copy of the site: open https://posture-buddy.pages.dev");
   if (r.status === 404 || r.status === 405 || r.status === 501) return new Error(`there's no study storage at ${STORAGE.api || here}: open https://posture-buddy.pages.dev, or the local app at http://localhost:8785`);

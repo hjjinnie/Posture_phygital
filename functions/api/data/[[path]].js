@@ -27,9 +27,14 @@ function corsHeaders(request) {
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Max-Age": "86400", Vary: "Origin" } : null;
 }
 
+// Study keys are compared after the same clean-up on both sides (browser and Cloudflare), so invisible differences
+// don't lock anyone out: Unicode normalised (NFKC), case ignored, zero-width characters dropped, any run of spaces
+// (including non-breaking ones from copy-paste) counted as one space, and spaces at the ends trimmed.
+const normalizeKey = k => String(k || "").normalize("NFKC").replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+  .replace(/\s+/g, " ").trim().toLowerCase();
 // Constant-time comparison, so response timing reveals nothing about the key.
 function sameKey(a, b) {
-  const x = new TextEncoder().encode(a || ""), y = new TextEncoder().encode(b || "");
+  const x = new TextEncoder().encode(normalizeKey(a)), y = new TextEncoder().encode(normalizeKey(b));
   let diff = x.length ^ y.length;
   for (let i = 0; i < Math.max(x.length, y.length); i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
   return diff === 0;

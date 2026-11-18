@@ -1,3 +1,4 @@
+import { normalizeKey } from "./study.js";
 // Posture study dashboard (dashboard.html): every participant's sessions, read from the study data API
 // (functions/api/data) with the study key. Scores are the study model's held posture score (0-100, 100 = the
 // participant's calibrated posture), from each session's summary.json and scored CSV.
@@ -17,8 +18,8 @@ try { key = localStorage.getItem(KEY_STORE) || ""; } catch {}
 $("key").value = key;
 
 async function api(path, as = "json") {
-  const r = await fetch(`${API}/api/data/${path}`, { headers: { "X-Study-Key": key }, cache: "no-store" });
-  if (r.status === 401) throw new Error("wrong or missing study key");
+  const r = await fetch(`${API}/api/data/${path}`, { headers: { "X-Study-Key": normalizeKey(key) }, cache: "no-store" });
+  if (r.status === 401) throw new Error("the study key doesn't match (capitals and extra spaces don't matter; press Show to check what's typed)");
   if (r.status === 503) throw new Error("study storage isn't set up yet");
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -318,4 +319,5 @@ async function refresh() {
 }
 $("key").onchange = () => { key = $("key").value.trim(); try { localStorage.setItem(KEY_STORE, key); } catch {} refresh(); };
 $("refresh").onclick = refresh;
+$("keyShow").onclick = () => { const show = $("key").type === "password"; $("key").type = show ? "text" : "password"; $("keyShow").textContent = show ? "Hide" : "Show"; };
 refresh();
