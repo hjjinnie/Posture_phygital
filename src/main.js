@@ -325,7 +325,7 @@ async function startSession() {
   if (!engine.ready) return studyError("Wait for the pose model to load.");
   studyNote("Checking study storage…");
   try { await checkStorage(); }
-  catch (e) { return studyError(`Can't start: ${e.message}${$("saveTo").value === "cloud" ? " (check the study key)" : ""}.`); }
+  catch (e) { return studyError(`Can't start: ${e.message}.`); }
   const condition = conditionFor(order, session);
   try {
     const existing = await loadParticipant(pid);

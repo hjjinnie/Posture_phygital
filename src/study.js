@@ -30,8 +30,19 @@ export function setStorage(mode, key = "", api = "") { Object.assign(STORAGE, { 
 const cloud = () => STORAGE.mode === "cloud";
 const dataUrl = (pid, file) => cloud() ? `${STORAGE.api}/api/data/${encodeURIComponent(pid)}/${file}` : `data/${encodeURIComponent(pid)}/${file}`;
 const auth = () => cloud() ? { "X-Study-Key": STORAGE.key } : {};
+// Says exactly why cloud storage refused, so a problem on another computer can be told apart from a wrong key.
 function failure(r, what) {
-  return new Error(r.status === 401 ? "wrong or missing study key" : r.status === 503 ? "cloud storage isn't set up yet" : `${what}: HTTP ${r.status}`);
+  const here = location.origin.startsWith("http") ? location.origin : "a file opened directly";
+  if (r.status === 401) return new Error("the study key doesn't match the one set in Cloudflare (it's case-sensitive)");
+  if (r.status === 403) return new Error(`this address (${here}) isn't allowed to use study storage: open https://posture-buddy.pages.dev, or the local app at http://localhost:8785`);
+  if (r.status === 503) return new Error("cloud storage isn't set up on this copy of the site: open https://posture-buddy.pages.dev");
+  if (r.status === 404 || r.status === 405 || r.status === 501) return new Error(`there's no study storage at ${STORAGE.api || here}: open https://posture-buddy.pages.dev, or the local app at http://localhost:8785`);
+  return new Error(`${what}: the server answered HTTP ${r.status}`);
+}
+// A fetch that never got an answer: blocked network, offline, or a key with characters browsers can't send.
+function unreachable(e) {
+  if (/ISO-8859-1|code point|header/i.test(e?.message || "")) return new Error("the study key contains a character browsers can't send (use letters, digits, spaces and simple punctuation)");
+  return new Error(`can't reach Cloudflare from this computer (${e?.message || "network error"}): check the internet connection, VPN or network filter`);
 }
 // mode: append; write (an existing file is kept as a .bak first: raw recordings, calibration); replace (derived files)
 async function save(pid, file, body, mode = "write") {
@@ -50,8 +61,9 @@ export async function checkStorage() {
     if (!r?.ok) throw new Error("can't save on this Mac: run the app from serve.py");
     return "saving to this Mac (data/)";
   }
-  const r = await fetch(`${STORAGE.api}/api/data/`, { cache: "no-store", headers: auth() }).catch(() => null);
-  if (!r) throw new Error("can't reach Cloudflare");
+  let r;
+  try { r = await fetch(`${STORAGE.api}/api/data/`, { cache: "no-store", headers: auth() }); }
+  catch (e) { throw unreachable(e); }
   if (!r.ok) throw failure(r, "checking cloud storage");
   return `saving to Cloudflare (${(await r.json()).length} participants so far)`;
 }
