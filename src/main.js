@@ -443,9 +443,11 @@ async function applyStorage() {
   const mode = $("saveTo").value;
   $("studyKey").hidden = $("studyKeyShow").hidden = $("studyKeyLink").hidden = mode !== "cloud";
   setStorage(mode, $("studyKey").value.trim(), CLOUD_API);
-  if (mode === "cloud" && !$("studyKey").value.trim()) { studyNote("Enter the study key to save to Cloudflare."); study.noteError = true; return; }
-  try { studyNote(await checkStorage()); if ($("pid").value) $("pid").onchange(); }
-  catch (e) { studyNote(`Study storage: ${e.message}.`); study.noteError = true; }
+  try { studyNote(await checkStorage()); if ($("pid").value) $("pid").onchange(); }   // works without a key when storage is open
+  catch (e) {
+    studyNote(mode === "cloud" && !$("studyKey").value.trim() ? "Enter the study key to save to Cloudflare." : `Study storage: ${e.message}.`);
+    study.noteError = true;
+  }
 }
 $("saveTo").onchange = () => { store("study.saveTo", $("saveTo").value); applyStorage(); };
 $("studyKey").onchange = () => { store("study.key", $("studyKey").value.trim()); applyStorage(); };

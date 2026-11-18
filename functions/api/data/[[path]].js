@@ -5,7 +5,8 @@
 //   GET  /api/data/<participant>/<file>   the file, or 404
 //   GET  /api/data/<participant>/         the participant's files: [{ name, bytes, updated }]
 //   GET  /api/data/                       participants: [{ participant, files, updated }]
-// Every request needs the header X-Study-Key equal to the STUDY_KEY secret, which is set in Cloudflare, never in code.
+// Every request needs the header X-Study-Key equal to the STUDY_KEY secret, which is set in Cloudflare, never in code,
+// unless OPEN_ACCESS is "true" in wrangler.toml, which lets anyone using the site read and write without a key.
 // Requests are accepted from this site and from the local app (http://localhost:<port>), so a session run locally
 // (for the Pi screen) can save here too.
 const PID = /^[A-Za-z0-9_-]{1,40}$/, FILE = /^[A-Za-z0-9_.-]{1,80}\.(?:jsonl|csv|json)$/;
@@ -45,9 +46,12 @@ export async function onRequest({ request, env, params }) {
   const reply = (body, status = 200, headers = {}) => new Response(body, { status, headers: { ...(cors || {}), "Cache-Control": "no-store", ...headers } });
   if (!cors) return reply("origin not allowed", 403);
   if (request.method === "OPTIONS") return reply(null, 204);
-  if (!env.STUDY_KEY) return reply("study storage isn't set up: no STUDY_KEY secret", 503);
   if (!env.DB) return reply("study storage isn't set up: no DB binding", 503);
-  if (!sameKey(request.headers.get("X-Study-Key"), env.STUDY_KEY)) return reply("wrong or missing study key", 401);
+  // OPEN_ACCESS = "true" (wrangler.toml) lets anyone using the site read and write study data without the key.
+  if (env.OPEN_ACCESS !== "true") {
+    if (!env.STUDY_KEY) return reply("study storage isn't set up: no STUDY_KEY secret", 503);
+    if (!sameKey(request.headers.get("X-Study-Key"), env.STUDY_KEY)) return reply("wrong or missing study key", 401);
+  }
   await ensureSchema(env.DB);
 
   const [pid, file, extra] = params.path || [];

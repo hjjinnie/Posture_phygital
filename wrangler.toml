@@ -9,3 +9,8 @@ compatibility_date = "2025-01-01"
 binding = "DB"
 database_name = "posture-study"
 database_id = "f9738bfd-f4de-4229-90ec-7d6fe819dbc3"
+
+[vars]
+# "true": anyone using the site can record, see and change study data without the study key (temporary, for setup).
+# Set to "false" and run ./deploy.sh to require the key again.
+OPEN_ACCESS = "true"

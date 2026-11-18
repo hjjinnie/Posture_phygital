@@ -306,15 +306,14 @@ function renderSessionCards(p) {
 }
 
 // ---- load ----
-async function refresh() {
-  if (!key) { $("status").innerHTML = `<span class="error">Enter the study key.</span>`; return; }
+async function refresh() {   // works without a key when study storage is open
   $("status").textContent = "Loading…";
   try {
     const people = await loadAll();
     renderTiles(people); renderDumbbell(people); renderTable(people);
     $("status").textContent = `Updated ${new Date().toLocaleTimeString()}`;
   } catch (e) {
-    $("status").innerHTML = `<span class="error">${esc(e.message)}</span>`;
+    $("status").innerHTML = `<span class="error">${esc(!key && /doesn't match/.test(e.message) ? "Enter the study key." : e.message)}</span>`;
   }
 }
 $("key").onchange = () => { key = $("key").value.trim(); try { localStorage.setItem(KEY_STORE, key); } catch {} refresh(); };

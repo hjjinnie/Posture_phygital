@@ -65,6 +65,10 @@ the resolution (5 s, 15 s, 1 min), or tick **All posture dimensions** for a smal
 `summary.json`). Any researcher's browser with the study key reads and writes the same participants, so participant IDs
 must be unique across the team (e.g. a shared ID sheet, or a prefix per researcher).
 
+**Open access (currently on):** `OPEN_ACCESS = "true"` in `wrangler.toml` lets anyone using the site record, see and
+change study data without the key. To require the key again, set it to `"false"` and run `./deploy.sh`; the key
+already set in Cloudflare then applies.
+
 **Setting the study key** (once, by you; it's never in the code). Choose a long passphrase and run, then type it when asked:
 
 ```bash
