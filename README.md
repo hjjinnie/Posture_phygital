@@ -74,6 +74,11 @@ PATH=/usr/local/opt/node@20/bin:$PATH npx --yes wrangler@3 pages secret put STUD
 Then run `./deploy.sh` once so the site picks it up. Share the key only with researchers; changing it the same way
 locks out old copies.
 
+**Sharing access:** **Copy link with key** (in the Study panel and on the dashboard) copies a link that sets the key in
+a colleague's browser when they open it; the key is then removed from the address bar, and it travels after `#`, so it
+never reaches the server or its logs. Anyone with the link can record, see and change study data, so share it
+privately. Changing the key cancels every link made with the old one.
+
 **Publishing the latest commit:** `./deploy.sh` (uploads committed files only, never `data/`; `./deploy.sh --dev` runs
 the same site and API locally with a test database). The API is `functions/api/data/[[path]].js`; the database and
 project are in `wrangler.toml`.

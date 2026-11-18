@@ -2,7 +2,7 @@ import { PoseEngine, drawSkeleton } from "./pose.js";
 import { extractFeatures, median } from "./posture.js";
 import { PosturePipeline, SETTINGS } from "./pipeline.js";
 import { STUDY, Recorder, conditionFor, suggestedOrder, rescoreParticipant, saveCalibration,
-  loadParticipant, saveParticipant, setStorage, checkStorage, downloadParticipant } from "./study.js";
+  loadParticipant, saveParticipant, setStorage, checkStorage, downloadParticipant, takeKeyFromLink, copyShareLink } from "./study.js";
 import { VISUALS, DEFAULT_VISUAL } from "./visuals.js";
 import { DisplayLink, TARGETS, FLIPS } from "./display.js";
 
@@ -390,7 +390,7 @@ function studyNote(text) { study.note = text; study.noteError = false; renderStu
 function studyError(text) { studyNote(text); study.noteError = true; banner(text, 6000); renderStudyStatus(performance.now()); }
 function studyControls() {
   const busy = inStudy();
-  for (const id of ["pid", "order", "session", "studyStart", "studyRescore", "studyDownload", "saveTo", "studyKey", "studyKeyShow"]) $(id).disabled = busy;
+  for (const id of ["pid", "order", "session", "studyStart", "studyRescore", "studyDownload", "saveTo", "studyKey", "studyKeyShow", "studyKeyLink"]) $(id).disabled = busy;
   $("studyStop").disabled = !busy || study.phase === "saving";
   $("studyCond").textContent = `Session ${$("session").value}: ${conditionFor($("order").value, +$("session").value)}`;
 }
@@ -436,10 +436,12 @@ $("studyDownload").onclick = async () => {
 // Where study data is saved: Cloudflare (default; needs the study key) or this Mac (only when running from serve.py).
 $("saveTo").querySelector('[value="local"]').disabled = !LOCAL;
 $("saveTo").value = LOCAL && store("study.saveTo") === "local" ? "local" : "cloud";
+const linkKey = takeKeyFromLink();   // opened from a shared link: the key is saved, and Cloudflare is chosen
+if (linkKey) { $("saveTo").value = "cloud"; store("study.saveTo", "cloud"); }
 $("studyKey").value = store("study.key") || "";
 async function applyStorage() {
   const mode = $("saveTo").value;
-  $("studyKey").hidden = $("studyKeyShow").hidden = mode !== "cloud";
+  $("studyKey").hidden = $("studyKeyShow").hidden = $("studyKeyLink").hidden = mode !== "cloud";
   setStorage(mode, $("studyKey").value.trim(), CLOUD_API);
   if (mode === "cloud" && !$("studyKey").value.trim()) { studyNote("Enter the study key to save to Cloudflare."); study.noteError = true; return; }
   try { studyNote(await checkStorage()); if ($("pid").value) $("pid").onchange(); }
@@ -447,6 +449,12 @@ async function applyStorage() {
 }
 $("saveTo").onchange = () => { store("study.saveTo", $("saveTo").value); applyStorage(); };
 $("studyKey").onchange = () => { store("study.key", $("studyKey").value.trim()); applyStorage(); };
+$("studyKeyLink").onclick = async () => {
+  const key = $("studyKey").value.trim();
+  if (!key) return studyError("Enter the study key first.");
+  const copied = await copyShareLink(location.pathname.replace(/[^/]*$/, ""), key);
+  studyNote(copied ? "Link with the study key copied. Share it privately: anyone with it can record and change study data." : "");
+};
 $("studyKeyShow").onclick = () => {
   const show = $("studyKey").type === "password";
   $("studyKey").type = show ? "text" : "password";

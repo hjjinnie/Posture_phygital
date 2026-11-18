@@ -30,6 +30,23 @@ export const suggestedOrder = pid => (parseInt(pid.replace(/\D/g, ""), 10) || 0)
 // (including non-breaking ones from copy-paste) counted as one space, and spaces at the ends trimmed.
 export const normalizeKey = k => String(k || "").normalize("NFKC").replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
   .replace(/\s+/g, " ").trim().toLowerCase();
+// Shareable links carry the key after "#key=" (never sent to the server). Opening one saves the key in this browser
+// (where the app and the dashboard both read it) and removes it from the address bar at once.
+export const KEY_STORE = "posture-buddy.study.key";
+export function takeKeyFromLink() {
+  const m = location.hash.match(/(?:^#|&)key=([^&]*)/);
+  if (!m) return null;
+  const key = decodeURIComponent(m[1]);
+  try { localStorage.setItem(KEY_STORE, key); } catch {}
+  history.replaceState(null, "", location.pathname + location.search);
+  return key;
+}
+export function shareLink(path, key) { return `${location.origin}${path}#key=${encodeURIComponent(key)}`; }
+export async function copyShareLink(path, key) {
+  const link = shareLink(path, key);
+  try { await navigator.clipboard.writeText(link); return true; }
+  catch { prompt("Copy this link (it includes the study key):", link); return false; }
+}
 export const STORAGE = { mode: "local", key: "", api: "" };
 export function setStorage(mode, key = "", api = "") { Object.assign(STORAGE, { mode, key: normalizeKey(key), api }); }
 const cloud = () => STORAGE.mode === "cloud";

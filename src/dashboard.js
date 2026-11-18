@@ -1,11 +1,11 @@
-import { normalizeKey } from "./study.js";
+import { normalizeKey, KEY_STORE, takeKeyFromLink, copyShareLink } from "./study.js";
 // Posture study dashboard (dashboard.html): every participant's sessions, read from the study data API
 // (functions/api/data) with the study key. Scores are the study model's held posture score (0-100, 100 = the
 // participant's calibrated posture), from each session's summary.json and scored CSV.
 const q = new URLSearchParams(location.search);
 const LOCAL = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(location.hostname);
 const API = q.has("api") ? q.get("api") : LOCAL ? "https://posture-buddy.pages.dev" : "";
-const KEY_STORE = "posture-buddy.study.key";   // shared with the app's study panel
+takeKeyFromLink();   // opened from a shared link: save the key, clear it from the address bar
 const $ = id => document.getElementById(id);
 const SVGNS = "http://www.w3.org/2000/svg";
 const COLOR = { passive: "var(--passive)", active: "var(--active)" };
@@ -319,5 +319,10 @@ async function refresh() {
 }
 $("key").onchange = () => { key = $("key").value.trim(); try { localStorage.setItem(KEY_STORE, key); } catch {} refresh(); };
 $("refresh").onclick = refresh;
+$("keyLink").onclick = async () => {
+  if (!key) { $("status").innerHTML = `<span class="error">Enter the study key first.</span>`; return; }
+  const copied = await copyShareLink(location.pathname, key);
+  if (copied) $("status").textContent = "Link with the study key copied. Share it privately: anyone with it can see, record and change study data.";
+};
 $("keyShow").onclick = () => { const show = $("key").type === "password"; $("key").type = show ? "text" : "password"; $("keyShow").textContent = show ? "Hide" : "Show"; };
 refresh();
