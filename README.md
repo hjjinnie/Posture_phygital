@@ -191,6 +191,12 @@ Nothing needs installing on the Pi beyond Raspberry Pi OS with desktop (the serv
    scp -r pi <user>@10.12.194.1:posture-buddy/ && ssh <user>@10.12.194.1 posture-buddy/pi/install.sh
    ```
 
+**USB network that never runs dry** (run once on the Pi: `sudo bash posture-buddy/pi/fix-usb-net.sh`): out of the box
+the Pi hands computers only 12 addresses, each held for an hour, and every replug or restart takes a new one, so after a
+dozen moves between laptops no computer gets an address ("no address available" in the Pi's log) and the cable link
+looks plugged in but dead. The script widens the pool to 240 addresses with 2-minute leases and clears old leases at
+every boot. The Pi stays at `10.12.194.1`.
+
 **Orientation:** projected from above (the screen reflected in glass), the picture is seen mirrored, so the stream is
 flipped vertically by default. **Orientation** next to **Screen** offers Normal, Flip vertical, Flip horizontal and
 Rotate 180°; the preview shows what's sent, and this window's own view is never flipped. **Brightness** (default 2×)
