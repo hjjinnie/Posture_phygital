@@ -1,9 +1,13 @@
-// Streams the current visual to an external screen as JPEG frames.
-// A second, small renderer draws the visual's display view (its `lcdCamera`, on black); a transport carries the frames:
+// Puts the current visual on an external screen.
+// Streamed: a second, small renderer draws the visual's display view (its `lcdCamera`, on black) and a transport
+// carries the frames as JPEGs:
 //   PiTransport     WebSocket to pi/posture_display.py, which shows them full screen on the Pi's HDMI display.
 //   SerialTransport Web Serial (Chrome/Edge) to esp32/PostureBuddy: "FLWR" + uint32 LE length + JPEG,
 //                   answered by "OK" + status + uint16 total ms + uint16 LCD-wait ms.
 // The Pi and the board acknowledge each frame as soon as it arrives.
+// Drawn on the Pi: BleTransport sends only the posture (~30 times a second) and the screen settings over Bluetooth
+// (Web Bluetooth, Chrome/Edge) to pi/posture_ble.py, and the Pi draws the visual itself (pi/live.js). No network,
+// no addresses; the renderer here only draws the preview.
 import * as THREE from "three";
 
 // Framing. Each visual's display camera has a default shot (zoom 1). With zoom "auto" the shot is fitted to the
@@ -13,6 +17,7 @@ import * as THREE from "three";
 export const FLIPS = { none: "Normal", v: "Flip vertical", h: "Flip horizontal", both: "Rotate 180°" };
 export const TARGETS = {
   pi: { label: "Raspberry Pi (HDMI)", width: 960, height: 540, fps: 30, quality: 0.85, zoom: "auto", maxZoom: "visual" },
+  ble: { label: "Raspberry Pi (Bluetooth)", width: 270, height: 480, fps: 30, zoom: "auto", maxZoom: "visual" },
   esp32: { label: "ESP32 LCD (USB serial)", width: 320, height: 240, fps: 20, quality: 0.8, zoom: "auto", maxZoom: 1 },
 };
 const FILL = 0.85;     // content stays within 85% of the half-frame: a 7.5% margin to every edge
@@ -60,7 +65,9 @@ export class DisplayLink {
     this.bright = t.bright ?? 1;    // stream brightness: 1 = unchanged, higher lifts faint and mid tones
     this.maxZoom = t.maxZoom;
     this.half = null;          // current auto-framed vertical half-angle tangent
-    this.transport = target === "pi" ? new PiTransport(host) : new SerialTransport();
+    this.transport = target === "pi" ? new PiTransport(host) : target === "ble" ? new BleTransport() : new SerialTransport();
+    this.state = null;         // Bluetooth: the posture the visual is showing, and its name (set by the app)
+    this.visualName = null;
     this.transport.onclose = () => this.onchange();
     this.transport.onsize = (w, h) => this.#fitTo(w, h);
     this.budget = t.width * t.height;   // pixels per frame; the shape follows the screen's when it reports one
@@ -135,19 +142,13 @@ export class DisplayLink {
   tick(now) {
     if (!this.visual) return;
     const tr = this.transport, live = tr.connected;
+    if (tr.sendsState) return this.#tickState(now);
     if (live) this.#collect();
     if (now - this.lastFrame < 1000 / (live ? this.fps : 5) - 8) return;  // 8 ms slack for timer jitter
     const slot = this.slots.find(s => !s.fence);
     const busy = this.slots.filter(s => s.fence).length + this.encoding;
     if (live && (!slot || busy >= tr.maxInflight || !tr.canSend(now))) return;
-    const dt = Math.min((now - this.lastFrame) / 1000, 1);
-    this.lastFrame = now;
-
-    const cam = this.visual.lcdCamera, aspect = this.canvas.width / this.canvas.height;
-    const half = this.#frame(cam, aspect, dt);
-    const fov = 2 * Math.atan(half) * 180 / Math.PI;
-    if (cam.aspect !== aspect || cam.fov !== fov) { cam.aspect = aspect; cam.fov = fov; cam.updateProjectionMatrix(); }
-    this.visual.renderLcd(this.renderer);
+    this.#draw(now);
     if (!live) return;
 
     const gl = this.gl;
@@ -157,6 +158,30 @@ export class DisplayLink {
     slot.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
     slot.seq = ++this.seq;
     gl.flush();
+  }
+
+  // Draws the visual's display view into this.canvas (the stream's frame, or just the preview).
+  #draw(now) {
+    const dt = Math.min((now - this.lastFrame) / 1000, 1);
+    this.lastFrame = now;
+    const cam = this.visual.lcdCamera, aspect = this.canvas.width / this.canvas.height;
+    const half = this.#frame(cam, aspect, dt);
+    const fov = 2 * Math.atan(half) * 180 / Math.PI;
+    if (cam.aspect !== aspect || cam.fov !== fov) { cam.aspect = aspect; cam.fov = fov; cam.updateProjectionMatrix(); }
+    this.visual.renderLcd(this.renderer);
+  }
+
+  // Bluetooth: send the posture at this.fps (and the settings whenever they change); the Pi draws the visual.
+  // The preview here refreshes a few times a second.
+  #tickState(now) {
+    const tr = this.transport;
+    if (tr.connected && this.state && now - this.lastSent >= 1000 / this.fps - 8
+        && tr.sendState(stateBytes(this.state), configBytes(this.visualName, this.flip, this.bright))) {
+      if (this.lastSent) this.stats.fps += (1000 / Math.max(now - this.lastSent, 1) - this.stats.fps) * 0.1;
+      this.lastSent = now;
+    }
+    this.stats.note = tr.note;
+    if (now - this.lastFrame >= 200) this.#draw(now);
   }
 
   // Returns the vertical half-angle tangent for this frame's camera.
@@ -274,6 +299,94 @@ class PiTransport {
   async send(jpg) {
     if (!this.connected) return false;
     this.ws.send(jpg);
+    return true;
+  }
+}
+
+// ---- Raspberry Pi over Bluetooth LE: posture and settings only; the Pi draws the visual (pi/posture_ble.py, pi/live.js) ----
+const BLE = {
+  service: "8f6a0001-5c1e-4f0a-9b8e-7f2a3c4d5e60",
+  state: "8f6a0002-5c1e-4f0a-9b8e-7f2a3c4d5e60",    // 20 bytes, write without response
+  config: "8f6a0003-5c1e-4f0a-9b8e-7f2a3c4d5e60",   // 4 bytes, write
+  status: "8f6a0004-5c1e-4f0a-9b8e-7f2a3c4d5e60",   // 6 bytes, notify: fps, width, height, screens
+};
+// The settings message carries indexes into these; pi/live.js has the same lists.
+export const BLE_VISUALS = ["ema-liquid", "ema-contour", "ema-dandelion", "ema-branching", "blob"];
+export const BLE_FLIPS = ["none", "v", "h", "both"];
+const MILLI = ["trunk", "lateral", "head", "protraction", "elevL", "elevR", "wellbeing", "confidence"];   // x1000
+const CENTI = ["headRoll", "shoulderTilt"];   // degrees x100
+
+// 20 bytes (fits a default Bluetooth packet): the ten posture values as int16 LE.
+function stateBytes(s) {
+  const v = new DataView(new ArrayBuffer(20)), i16 = x => Math.max(-32768, Math.min(32767, Math.round(x || 0)));
+  MILLI.forEach((k, i) => v.setInt16(i * 2, i16(s[k] * 1000), true));
+  CENTI.forEach((k, i) => v.setInt16(16 + i * 2, i16(s[k] * 100), true));
+  return v.buffer;
+}
+const configBytes = (name, flip, bright) => new Uint8Array([Math.max(0, BLE_VISUALS.indexOf(name)),
+  Math.max(0, BLE_FLIPS.indexOf(flip)), Math.round(Math.min(Math.max(bright, 1), 25) * 10), 0]);
+
+let bleDevice = null;   // the Pi chosen in Chrome's Bluetooth chooser; reconnecting in this page needs no chooser
+
+class BleTransport {
+  constructor() { this.chars = null; this.busy = false; this.sentConfig = null; this.wanted = false; this.note = ""; this.onclose = () => {}; }
+  get supported() { return !!navigator.bluetooth; }
+  get sendsState() { return true; }
+  get connected() { return !!this.chars && !!bleDevice?.gatt.connected; }
+
+  async connect() {
+    if (!navigator.bluetooth) throw new Error("this browser can't use Bluetooth from a website. Use Chrome or Edge");
+    bleDevice ??= await navigator.bluetooth.requestDevice({
+      filters: [{ services: [BLE.service] }, { namePrefix: "Posture" }], optionalServices: [BLE.service] });
+    bleDevice.ongattserverdisconnected = () => this.#dropped();
+    this.wanted = true;
+    const server = await bleDevice.gatt.connect();
+    const svc = await server.getPrimaryService(BLE.service);
+    const state = await svc.getCharacteristic(BLE.state), config = await svc.getCharacteristic(BLE.config);
+    const status = await svc.getCharacteristic(BLE.status);
+    this.chars = { state, config, status };
+    this.sentConfig = null;
+    this.note = "connected";
+    try {
+      status.addEventListener("characteristicvaluechanged", e => this.#status(e.target.value));
+      await status.startNotifications();
+    } catch {}
+  }
+
+  #status(v) {
+    if (v.byteLength < 6) return;
+    const fps = v.getUint8(0), w = v.getUint16(1, true), h = v.getUint16(3, true), screens = v.getUint8(5);
+    this.note = screens ? `Pi drawing ${fps} fps at ${w}×${h}` : "Pi screen page not open";
+  }
+
+  // Out of range or the Pi restarted: keep trying every few seconds until it's back or Disconnect is pressed.
+  #dropped() {
+    if (!this.chars && !this.wanted) return;
+    this.chars = null;
+    this.note = "reconnecting…";
+    this.onclose();
+    const retry = () => this.wanted && !this.connected && this.connect().then(() => this.onclose(), () => setTimeout(retry, 3000));
+    setTimeout(retry, 2000);
+  }
+
+  async disconnect() {
+    const had = this.chars || this.wanted;
+    this.wanted = false;
+    this.chars = null;
+    if (bleDevice?.gatt.connected) bleDevice.gatt.disconnect();
+    if (had) this.onclose();
+  }
+
+  // One Bluetooth operation at a time (overlapping ones are rejected): the settings first whenever they've changed,
+  // otherwise the posture. Returns false if the link is still busy with the last one.
+  sendState(state, config) {
+    if (this.busy || !this.connected) return false;
+    this.busy = true;
+    const key = config.join(",");
+    const op = key !== this.sentConfig
+      ? this.chars.config.writeValueWithResponse(config).then(() => { this.sentConfig = key; })
+      : this.chars.state.writeValueWithoutResponse(state);
+    op.catch(e => { this.note = `Bluetooth: ${e.message}`; }).finally(() => { this.busy = false; });
     return true;
   }
 }

@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Shows the posture visual on the Raspberry Pi's HDMI screen.
 
-The Mac renders each frame and sends it here as a JPEG over a WebSocket (ws://<pi>:8790/source).
-A full-screen Chromium page on the Pi (http://localhost:8790/) picks up the newest frame from
-ws://localhost:8790/screen and draws it, so decoding and scaling use the Pi's GPU.
+Two ways in:
+  USB cable (or Wi-Fi): the computer renders each frame and sends it here as a JPEG over a WebSocket
+    (ws://<pi>:8790/source). The full-screen Chromium page on the Pi (http://localhost:8790/) picks up the newest frame
+    from ws://localhost:8790/screen and draws it, so decoding and scaling use the Pi's GPU.
+  Bluetooth: posture_ble.py receives the posture and screen settings and passes each message here (UDP on this
+    machine, port 8789); the screen page gets them from ws://localhost:8790/live and draws the visual itself (live.js,
+    with the app's visuals from ../src and three.js from vendor/).
 
 Standard library only, so nothing needs installing (the Pi often has no internet over USB).
 """
@@ -19,6 +23,20 @@ latest_id = 0
 new_frame = asyncio.Event()
 screens = set()
 screen_stats = {"fps": 0.0, "drawMs": 0.0}   # plus width/height once a screen reports them
+
+# Bluetooth path: the newest settings and posture, and the screen pages drawing them.
+LIVE_PORT = 8789
+live_screens = set()
+live_last = {}                # b"C" -> newest settings message, b"S" -> newest posture message
+live_stats = {"fps": 0.0, "w": 0, "h": 0}
+
+# Files the screen page loads for the Bluetooth path: its own script, three.js, and the app's visuals.
+ROOT = os.path.dirname(HERE)
+STATIC = {"/live.js": os.path.join(HERE, "live.js")}
+for name in ("visuals.js", "blob.js", "ema.js"):
+    STATIC[f"/src/{name}"] = os.path.join(ROOT, "src", name)
+for rel in ("build/three.module.js", "build/three.core.js", "examples/jsm/controls/OrbitControls.js"):
+    STATIC[f"/vendor/three/{rel}"] = os.path.join(HERE, "vendor", "three", rel)
 
 
 def log(*a):
@@ -138,6 +156,39 @@ async def handle_screen(reader, writer, peer):
         log("screen disconnected", peer)
 
 
+async def handle_live(reader, writer, peer):
+    """A screen page drawing the visual itself. It gets the newest settings and posture at once, then each new one;
+    it reports "stats <fps> <width> <height>" every couple of seconds."""
+    log("live screen connected", peer)
+    live_screens.add(writer)
+    try:
+        for kind in (b"C", b"S"):
+            if kind in live_last:
+                await ws_send(writer, 0x2, live_last[kind])
+        while (msg := await ws_recv(reader, writer)) is not None:
+            op, data = msg
+            if op == 0x1 and data.startswith(b"stats "):
+                fps, w, h = data[6:].split()[:3]
+                live_stats.update(fps=float(fps), w=int(w), h=int(h))
+    finally:
+        live_screens.discard(writer)
+        log("live screen disconnected", peer)
+
+
+class LiveRelay(asyncio.DatagramProtocol):
+    """Messages from posture_ble.py: b"S" + posture or b"C" + settings. Passed on to every live screen page; a page
+    that has fallen behind skips messages rather than queueing them."""
+    def datagram_received(self, data, addr):
+        if not data or data[:1] not in (b"C", b"S"):
+            return
+        live_last[data[:1]] = data
+        n = len(data)
+        frame = bytes([0x82, n]) + data if n < 126 else bytes([0x82, 126]) + struct.pack(">H", n) + data
+        for w in list(live_screens):
+            if w.transport.get_write_buffer_size() < 16384:
+                w.write(frame)
+
+
 # ---- HTTP: serves the screen page and upgrades WebSocket requests ----
 
 async def handle(reader, writer):
@@ -149,22 +200,27 @@ async def handle(reader, writer):
         headers = {k.strip().lower(): v.strip() for k, v in (l.split(":", 1) for l in lines[1:] if ":" in l)}
         path = path.split("?", 1)[0]
 
-        if headers.get("upgrade", "").lower() == "websocket" and path in ("/source", "/screen"):
+        if headers.get("upgrade", "").lower() == "websocket" and path in ("/source", "/screen", "/live"):
             accept = base64.b64encode(hashlib.sha1(headers["sec-websocket-key"].encode() + WS_GUID).digest()).decode()
             writer.write(("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
                           f"Sec-WebSocket-Accept: {accept}\r\n\r\n").encode())
             await writer.drain()
-            await (handle_source if path == "/source" else handle_screen)(reader, writer, peer)
-        elif method == "GET" and path in ("/", "/screen.html"):
-            with open(os.path.join(HERE, "screen.html"), "rb") as f:
-                body = f.read()
-            writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\n"
+            await {"/source": handle_source, "/screen": handle_screen, "/live": handle_live}[path](reader, writer, peer)
+        elif method == "GET" and (path in ("/", "/screen.html", "/stats") or path in STATIC):
+            if path == "/stats":   # how the screen pages are doing (posture_ble.py reports it to the app)
+                body, kind = json.dumps({"screens": len(screens), **screen_stats, "liveScreens": len(live_screens),
+                                         "live": live_stats}).encode(), "application/json"
+            else:
+                with open(STATIC.get(path) or os.path.join(HERE, "screen.html"), "rb") as f:
+                    body = f.read()
+                kind = "text/javascript" if path in STATIC else "text/html"
+            writer.write(f"HTTP/1.1 200 OK\r\nContent-Type: {kind}; charset=utf-8\r\nCache-Control: no-store\r\n".encode()
                          + f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode() + body)
             await writer.drain()
         else:
             writer.write(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             await writer.drain()
-    except (asyncio.IncompleteReadError, asyncio.TimeoutError, ConnectionError, ValueError, KeyError):
+    except (asyncio.IncompleteReadError, asyncio.TimeoutError, ConnectionError, ValueError, KeyError, FileNotFoundError):
         pass
     finally:
         writer.close()
@@ -172,7 +228,8 @@ async def handle(reader, writer):
 
 async def main():
     server = await asyncio.start_server(handle, "0.0.0.0", PORT, limit=1 << 16)
-    log(f"Posture display listening on port {PORT}")
+    await asyncio.get_running_loop().create_datagram_endpoint(LiveRelay, local_addr=("127.0.0.1", LIVE_PORT))
+    log(f"Posture display listening on port {PORT} (Bluetooth relay on 127.0.0.1:{LIVE_PORT})")
     async with server:
         await server.serve_forever()
 

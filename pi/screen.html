@@ -1,9 +1,15 @@
 <!doctype html>
-<!-- Full-screen page on the Pi's HDMI display; posture_display.py serves it and feeds it frames from the Mac. -->
+<!-- Full-screen page on the Pi's HDMI display, served by posture_display.py. Two ways the visual arrives:
+     USB/Wi-Fi: finished frames from the computer (/screen), drawn here as they come.
+     Bluetooth: posture and settings (/live); live.js draws the visual on the Pi itself.
+     Whichever sent something most recently is shown. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Posture display</title>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/build/three.module.js", "three/addons/": "./vendor/three/examples/jsm/" } }
+</script>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; cursor: none; }
   canvas { display: block; width: 100vw; height: 100vh; }
@@ -36,6 +42,33 @@ function draw(bmp) {
   g.drawImage(bmp, (c.width - w) / 2, (c.height - h) / 2, w, h);
 }
 
+// ---- which source is on screen: the newest one wins ----
+let lastFrameAt = 0, lastLiveAt = 0, live = null;
+function choose() {
+  const liveOn = !!live && lastLiveAt >= lastFrameAt;   // its canvas appears once its first visual has drawn
+  live?.show(liveOn);
+  c.style.visibility = liveOn && live.ready ? "hidden" : "visible";
+}
+
+// ---- Bluetooth path: posture and settings, drawn here (live.js) ----
+let liveSock = null, liveLoading = null;
+function connectLive() {
+  const ws = liveSock = new WebSocket(`ws://${location.host}/live`);
+  ws.binaryType = "arraybuffer";
+  ws.onmessage = async e => {
+    lastLiveAt = performance.now();
+    if (!live) {
+      liveLoading ??= import("./live.js").then(m => m.createLive({
+        onStats: (fps, w, h) => liveSock?.readyState === 1 && liveSock.send(`stats ${fps.toFixed(1)} ${w} ${h}`),
+      }));
+      live = await liveLoading;
+    }
+    live.message(e.data);
+    choose();
+  };
+  ws.onclose = () => setTimeout(connectLive, 1000);
+}
+
 let sock = null;
 const sendSize = () => sock?.readyState === 1 && sock.send(`size ${c.width}x${c.height}`);  // the Mac renders to fit
 
@@ -50,6 +83,8 @@ function connect() {
       last?.close();
       last = bmp;
       draw(bmp);
+      lastFrameAt = performance.now();
+      choose();
     } finally {
       ws.send("ok " + (performance.now() - t0).toFixed(1));  // ready for the next frame
     }
@@ -60,6 +95,7 @@ function connect() {
 addEventListener("resize", () => { fit(); sendSize(); });
 fit();
 connect();
+connectLive();
 </script>
 </body>
 </html>

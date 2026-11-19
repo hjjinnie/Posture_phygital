@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Sets up a Raspberry Pi (Raspberry Pi OS with desktop) as the posture visual's screen. No sudo needed:
 #   - posture_display.py runs as a user service (port 8790), started with your login
+#   - posture_ble.py runs as a user service too: the Pi shows up as "Posture Buddy" over Bluetooth
 #   - Chromium opens the full-screen screen page when the desktop starts
-# Run on the Pi from this folder:  ./install.sh
+# Copy both the pi/ and src/ folders (the Bluetooth screen draws the app's visuals from ../src), then run on the Pi
+# from this folder:  ./install.sh
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-chmod +x "$DIR/kiosk.sh" "$DIR/posture_display.py"
+chmod +x "$DIR/kiosk.sh" "$DIR/posture_display.py" "$DIR/posture_ble.py"
+[ -f "$DIR/../src/visuals.js" ] || echo "Note: ../src is missing, so the Bluetooth screen can't draw the visuals. Copy the app's src/ folder next to pi/."
 
 echo "Installing the display server as a user service…"
 mkdir -p "$HOME/.config/systemd/user"
@@ -25,6 +28,24 @@ UNIT
 systemctl --user daemon-reload
 systemctl --user enable posture-display.service
 systemctl --user restart posture-display.service
+
+echo "Installing the Bluetooth link as a user service…"
+cat > "$HOME/.config/systemd/user/posture-ble.service" <<UNIT
+[Unit]
+Description=Posture Buddy Bluetooth link
+After=posture-display.service
+
+[Service]
+ExecStart=/usr/bin/python3 $DIR/posture_ble.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
+UNIT
+systemctl --user daemon-reload
+systemctl --user enable posture-ble.service
+systemctl --user restart posture-ble.service
 
 echo "Adding the full-screen page to the desktop's autostart…"
 mkdir -p "$HOME/.config/autostart"
@@ -61,5 +82,5 @@ PY
 labwc --reconfigure 2>/dev/null || true   # applies now if the desktop is running
 
 echo
-echo "Done. The server is $(systemctl --user is-active posture-display.service)."
+echo "Done. The server is $(systemctl --user is-active posture-display.service); Bluetooth link $(systemctl --user is-active posture-ble.service)."
 echo "The screen page opens by itself when the desktop starts; to open it now, run:  $DIR/kiosk.sh &"

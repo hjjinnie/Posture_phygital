@@ -105,7 +105,7 @@ project are in `wrangler.toml`.
 | `functions/api/data/` | the hosted study data API (Cloudflare Pages Function, D1 database), protected by the study key |
 | `dashboard.html`, `src/dashboard.js` | study dashboard: every participant's scores, passive vs active, sessions over time |
 | `deploy.sh`, `wrangler.toml` | publish to Cloudflare Pages |
-| `pi/` | Raspberry Pi screen: `posture_display.py` (receives frames), `screen.html` (full-screen page), `install.sh`, `kiosk.sh` |
+| `pi/` | Raspberry Pi screen: `posture_display.py` (receives frames), `posture_ble.py` (Bluetooth link), `screen.html` (full-screen page) and `live.js` (draws the visual on the Pi), `vendor/three/` (three.js for the Pi), `install.sh`, `kiosk.sh`, `fix-usb-net.sh`, `keep-logs.sh` |
 | `esp32/PostureBuddy/` | Arduino sketch for the ESP32-S3 + ST7789 LCD |
 | `esp32/lcd_test.py` | sends JPEG files to the board and reports frame rate (needs pyserial) |
 
@@ -164,6 +164,17 @@ kept as `<name>.<time>.bak`.
 
 ## Raspberry Pi screen (HDMI)
 
+Two ways to drive the Pi's screen; the computer always does the tracking. Pick one under **Screen**:
+
+- **Raspberry Pi (Bluetooth)** (recommended): no network, no address, nothing to set up on the computer. The app sends
+  only the posture (~30 times a second, 20 bytes each) and the screen settings over Bluetooth LE, and the Pi draws the
+  visual itself. Works from the hosted site and the local app, in Chrome or Edge on Mac or Windows (Safari and Firefox
+  have no Web Bluetooth). The USB-C cable then only powers the Pi (a wall supply works too). See *Bluetooth* below.
+- **Raspberry Pi (HDMI)** over the USB-C cable: the computer renders each frame and streams it. Needs the USB network
+  link (`10.12.194.1`) and, from the hosted site, Chrome's local network permission.
+
+### Over the USB cable
+
 The Mac still does the tracking and 3D rendering; the Pi only shows the frames, full screen on its HDMI display.
 Frames are ~0.5-megapixel JPEGs (~7–9 KB each) sent over a WebSocket; the Pi's Chromium decodes and scales them on its
 GPU. The screen page reports its size, so the frames match its shape (544×960 on a portrait 1080×1920 panel).
@@ -184,11 +195,13 @@ Nothing needs installing on the Pi beyond Raspberry Pi OS with desktop (the serv
    ```
    Plug the Pi's USB-C port into the Mac. The Mac sees a new network adapter, and the Pi is at `10.12.194.1`.
    A Pi 5 powered only by a laptop port may be short of power; a powered USB-C hub between them helps.
-2. Copy the `pi/` folder to the Pi and run `./install.sh` in it (no sudo needed). This runs `posture_display.py` as a
-   user service (port 8790), opens the full-screen page when the desktop starts, and adds a labwc window rule
-   (in `~/.config/labwc/rc.xml`) that parks and hides the mouse pointer when the page opens.
+2. Copy the `pi/` and `src/` folders to the Pi and run `./install.sh` in `pi/` (no sudo needed). This runs
+   `posture_display.py` and `posture_ble.py` as user services, opens the full-screen page when the desktop starts, and
+   adds a labwc window rule (in `~/.config/labwc/rc.xml`) that parks and hides the mouse pointer when the page opens.
+   The Bluetooth screen draws the app's visuals from `src/` with the copy of three.js in `pi/vendor/` (the Pi often has
+   no internet).
    ```bash
-   scp -r pi <user>@10.12.194.1:posture-buddy/ && ssh <user>@10.12.194.1 posture-buddy/pi/install.sh
+   scp -r pi src <user>@10.12.194.1:posture-buddy/ && ssh <user>@10.12.194.1 posture-buddy/pi/install.sh
    ```
 
 **USB network that never runs dry** (run once on the Pi: `sudo bash posture-buddy/pi/fix-usb-net.sh`): out of the box
@@ -209,6 +222,26 @@ draws. While streaming, this window's own view runs at 30 fps so the Pi's stream
 Measured with a 2018 MacBook Pro (Intel UHD 630 graphics), the blob and the heavy model, streaming over the USB cable
 to a Raspberry Pi 5 with a portrait 1080×1920 Waveshare screen: ~28–29 fps received, ~7 KB per frame, and the Pi's page
 draws each frame in 3–5 ms.
+
+### Bluetooth
+
+**Each time:** set **Screen** to *Raspberry Pi (Bluetooth)* and press **Connect**; Chrome lists nearby devices: pick
+**Posture Buddy** (the first time on a Mac, allow Chrome to use Bluetooth). The status line shows the update rate and how
+fast the Pi draws, e.g. "30 updates/s · Pi drawing 25 fps at 224×400". If the link drops (out of range, Pi restarted)
+the app reconnects by itself; reloading the page needs Connect again, without the device list.
+
+How it works: `pi/posture_ble.py` (BlueZ over D-Bus) makes the Pi a Bluetooth LE peripheral named "Posture Buddy" and
+passes each write to `posture_display.py` (UDP on the Pi), which hands it to the screen page (`/live` WebSocket); the
+page loads `pi/live.js` and draws the selected visual with the same framing, orientation and brightness as the stream.
+Messages: posture = ten int16 values (20 bytes, fits one default Bluetooth packet), settings = 4 bytes (visual,
+orientation, brightness), and the Pi notifies its drawing rate and size once a second. Whichever way sent something
+last is what the screen shows, so the USB stream still works alongside.
+
+The Pi 5's GPU can't draw the heavier visuals at full screen size (1080×1920: blob 3 fps, liquid metaball 3), so each is
+drawn smaller and scaled up, stepping the size down or up to stay at 25 fps or more. Measured on a Pi 5 with the visual
+framed to fill the screen: blob ~25 fps at 224×400, liquid metaball ~26 at 272×480, dandelions ~43 at 544×960. The
+first time a visual is shown after an update, the Pi takes up to ~20 s to compile its shaders ("loading…" stays up
+meanwhile); Chromium keeps them afterwards.
 
 ## ESP32-S3 LCD (alternative)
 

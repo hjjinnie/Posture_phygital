@@ -38,14 +38,14 @@ function store(k, v) {
 
 // ---- visuals (only the selected one exists; switching frees the other's GPU context) ----
 let visual = null, target = { ...NEUTRAL, wellbeing: SETTINGS.startHealth, confidence: 0 };
-function setTarget(s) { target = s; visual?.setTarget(s); }
+function setTarget(s) { target = s; visual?.setTarget(s); if (display) display.state = s; }
 $("visual").innerHTML = Object.entries(VISUALS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join("");
 async function setVisual(name) {
   if (!VISUALS[name]) name = DEFAULT_VISUAL;
   const Visual = await VISUALS[name].load();
   visual?.dispose();
   visual = app.visual = new Visual($("stage"));
-  if (display) display.visual = visual;
+  if (display) { display.visual = visual; display.visualName = name; }
   visual.setTarget(target);
   $("visual").value = name;
   store("visual", name);
@@ -265,11 +265,14 @@ function applyFlip() {
   display.canvas.style.filter = b === 1 ? "" : `brightness(${(1 + (b - 1) * 0.6).toFixed(2)})`;
 }
 
+const target_ = () => target;   // the posture the visual is showing (setDisplay's own parameter shadows `target`)
 function setDisplay(target) {
   if (!TARGETS[target]) target = "pi";
   display?.dispose();
   display = app.display = new DisplayLink(target, { host: $("piHost").value.trim(), ...(q.get("dispfps") && { fps: +q.get("dispfps") }), ...(q.get("zoom") && { zoom: q.get("zoom") === "auto" ? "auto" : +q.get("zoom") }) });
   display.visual = visual;
+  display.visualName = $("visual").value || store("visual");
+  display.state = target_();
   if (target === "pi") display.transport.onwait = msg => banner(msg, 60000);
   $("lcdPreview").replaceChildren(display.canvas);
   $("dispTarget").value = target;
@@ -284,8 +287,10 @@ if (q.get("connect") === "1" && display.target === "pi") display.connect().then(
 function renderDisplayStatus() {
   const s = display.stats;
   $("lcdBtn").textContent = display.connected ? "Disconnect" : "Connect";
-  $("lcdStatus").textContent = !display.supported ? "Needs Chrome or Edge (Web Serial)"
-    : display.connected ? `${s.fps.toFixed(0)} fps · ${s.kb.toFixed(0)} KB/frame` + (s.note ? ` · ${s.note}` : "")
+  const ble = display.target === "ble";
+  $("lcdStatus").textContent = !display.supported ? `Needs Chrome or Edge (${ble ? "Web Bluetooth" : "Web Serial"})`
+    : display.connected ? (ble ? `${s.fps.toFixed(0)} updates/s` : `${s.fps.toFixed(0)} fps · ${s.kb.toFixed(0)} KB/frame`) + (s.note ? ` · ${s.note}` : "")
+    : ble && s.note === "reconnecting…" ? "Bluetooth link lost · reconnecting…"
     : "Not connected";
 }
 $("dispTarget").onchange = e => setDisplay(e.target.value);
@@ -299,7 +304,10 @@ $("lcdBtn").onclick = async () => {
     banner("");
   } catch (e) {
     // NotFoundError: the serial picker was cancelled, or this browser (e.g. an embedded preview) can't show one.
-    banner(e.name === "NotFoundError" ? "No port chosen. In Chrome or Edge, pick “USB JTAG/serial debug unit”."
+    banner(display.target === "ble" ? (e.name === "NotFoundError"
+        ? "No Pi chosen. Pick “Posture Buddy” in Chrome's Bluetooth list; if it isn't there, check the Pi is on and nearby and Bluetooth is on here"
+        : `Pi (Bluetooth): ${e.message}`)
+      : e.name === "NotFoundError" ? "No port chosen. In Chrome or Edge, pick “USB JTAG/serial debug unit”."
       : display.target === "pi" ? `Pi screen: ${e.message}`
       : `LCD: ${e.message}`, 12000);
   }
