@@ -116,6 +116,7 @@ export class Recorder {
     this.timer = setInterval(() => this.flush(), cloud() ? 5000 : 1000);   // fewer, bigger writes to the cloud
   }
   event(t, name, extra = {}) { this.lines.push(JSON.stringify({ type: "event", t: r3(t), name, ...extra })); }
+  record(o) { this.lines.push(JSON.stringify(o)); }   // any other line (the companion page's once-a-second rows)
   // r: a pose result {lm, world} or null when nobody was found.
   frame(t, r) {
     this.lines.push(JSON.stringify(r

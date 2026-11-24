@@ -5,6 +5,8 @@
 //   8 droplets              = shoulders (tension buds them off the surface; relaxing pulls them back in)
 //   colour                  = which posture is active right now, muddied by sustained poor posture (wellbeing)
 //   gloss, clarity, height  = wellbeing (cloudy, dull, sagging and sinking when it has been bad for a while)
+//   setMood(joy, distress)  = rewards for how long a posture has lasted (the companion page): joy widens the smile, adds
+//                             a little bounce and grows leaf sprouts on top; distress frowns, shivers and sweats
 // It floats: nothing is anchored to the ground; posture deforms it around its centre of mass.
 //
 // Rendered by raymarching a signed-distance field inside a proxy box, so pieces can split off and
@@ -280,6 +282,34 @@ function bodySDF(p, u) {
   return sminJS(d, dd, u.uK.value);
 }
 
+// A little sprout: a stem with two leaves, pointing up (+y) from its base.
+function makeSprout() {
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x7fd36a, roughness: 0.55, side: THREE.DoubleSide });
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.009, 0.013, 0.13, 6).translate(0, 0.065, 0), mat);
+  const leaf = new THREE.Shape();
+  leaf.moveTo(0, 0); leaf.quadraticCurveTo(0.055, 0.045, 0, 0.13); leaf.quadraticCurveTo(-0.055, 0.045, 0, 0);
+  const geo = new THREE.ShapeGeometry(leaf, 8);
+  for (const side of [-1, 1]) {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.y = 0.115;
+    m.rotation.z = -side * 0.95;
+    g.add(m);
+  }
+  g.add(stem);
+  g.visible = false;
+  return g;
+}
+// A sweat drop: round at the bottom, pointed at the top (unit height).
+function makeSweat() {
+  const pts = [];
+  for (let i = 0; i <= 16; i++) { const t = Math.PI * i / 16; pts.push(new THREE.Vector2(0.5 * Math.sin(t) * (1 - Math.cos(t)) / 2 * 1.3, Math.cos(t) * 0.5)); }
+  const m = new THREE.Mesh(new THREE.LatheGeometry(pts, 14),
+    new THREE.MeshStandardMaterial({ color: 0xd2f0ff, roughness: 0.12, emissive: 0x4a90b8, transparent: true, opacity: 0.9 }));
+  m.visible = false;
+  return m;
+}
+
 function shadowTexture() {
   const c = document.createElement("canvas"); c.width = c.height = 128;
   const g = c.getContext("2d"), grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
@@ -324,6 +354,9 @@ export class JelloBlob {
     };
     this.bodyShadow = shadow();
     this.dropShadows = DROPS.map(shadow);
+    // Rewards for a long-held posture (setMood): sprouts on top for good posture, a sweat drop for poor posture.
+    this.sprouts = [0, 1, 2].map(() => { const g = makeSprout(); scene.add(g); return g; });
+    this.sweat = makeSweat(); scene.add(this.sweat);
 
     const v4 = n => Array.from({ length: n }, () => new THREE.Vector4());
     const v3 = n => Array.from({ length: n }, () => new THREE.Vector3());
@@ -351,6 +384,7 @@ export class JelloBlob {
     this.s = {
       trunk: S(0, 18), lateral: S(0, 18), head: S(0, 22), headRoll: S(0, 22), shoulderTilt: S(0, 22),
       protraction: S(0, 22), elevL: S(0, 30), elevR: S(0, 30), health: S(0.85, 2), presence: S(1, 6),
+      joy: S(0, 3), distress: S(0, 3),
     };
     // Higher up the spine = softer = more follow-through.
     this.nodes = Array.from({ length: NS }, (_, i) => new Jiggle3(lerp(220, 70, i / SEGS), 0.32));
@@ -391,6 +425,9 @@ export class JelloBlob {
     t.health.target = s.wellbeing;
     t.presence.target = s.confidence > 0.5 ? 1 : 0;
   }
+
+  // Rewards for how long a posture has lasted, each 0..1 (eased in and out over a few seconds).
+  setMood(joy, distress) { this.s.joy.target = clamp(joy, 0, 1); this.s.distress.target = clamp(distress, 0, 1); }
 
   // Advance physics only (no render). Fixed sub-steps keep the under-damped springs stable.
   step(dt, time) {
@@ -457,6 +494,7 @@ export class JelloBlob {
     const lean = v.lateral, curl = v.trunk, head = v.head, A = Math.abs(lean);
     const presence = clamp(v.presence, 0, 1);
     const awake = smooth(0.2, 0.8, presence);
+    const joy = clamp(v.joy, 0, 1), distress = clamp(v.distress, 0, 1);
 
     // ---- shoulders -> droplets (computed first: they take volume away from the body) ----
     const tensionSide = side => clamp(Math.max(v.protraction, side > 0 ? v.elevR : v.elevL) + 0.3 * smooth(0.5, 1, wilt), 0, 1);
@@ -494,10 +532,12 @@ export class JelloBlob {
       const wob = 0.012 * k * awake * smooth(0, 0.3, stretch);   // idle wobble once it's out of sphere shape
       N[k + 1].target.x += wob * Math.sin(time * 2.1 + k);
       N[k + 1].target.z += wob * Math.cos(time * 1.7 + k);
+      N[k + 1].target.x += 0.018 * distress * k * Math.sin(time * 37 + k * 1.3);   // shivering
     }
     const topDir = this._t.c.copy(dir);
     // Float: put the centre of mass (volume-weighted) at the hover point, which bobs and sinks as it wilts or sleeps.
-    const hover = HOVER - 0.4 * wilt - 0.15 * (1 - presence) + 0.07 * Math.sin(time * 1.3) * lerp(0.4, 1, awake);
+    const hover = HOVER - 0.4 * wilt - 0.15 * (1 - presence) + 0.07 * Math.sin(time * 1.3) * lerp(0.4, 1, awake)
+      + 0.08 * joy * Math.abs(Math.sin(time * 2.6));   // happy little hops
     let wsum = 0; tmp.set(0, 0, 0);
     for (let k = 0; k < NS; k++) { const w = rad[k] ** 3; tmp.addScaledVector(N[k].target, w); wsum += w; }
     tmp.multiplyScalar(-1 / wsum).add(dir.set(0, hover, 0));
@@ -585,10 +625,10 @@ export class JelloBlob {
     u.uFaceS.value = faceRad / 0.55;
     u.uFaceRad.value = faceRad;
     const ph = time % 3.7, blink = ph < 0.14 ? Math.abs(ph - 0.07) / 0.07 : 1;
-    u.uEye.value = awake * lerp(1, 0.45, wilt) * blink;
+    u.uEye.value = awake * lerp(1, 0.45, wilt) * blink * (1 - 0.3 * distress);
     const strain = Math.max(Math.abs(curl), head, A * 0.8, tension);
-    u.uSmile.value = clamp(1 - 1.7 * strain - 1.6 * wilt, -1, 1);
-    u.uBlush.value = (1 - wilt) * (1 - 0.5 * tension) * awake;
+    u.uSmile.value = clamp(clamp(1 - 1.7 * strain - 1.6 * wilt, -1, 1) + 0.9 * joy - 1.5 * distress, -1.5, 1.9);
+    u.uBlush.value = (1 - wilt) * (1 - 0.5 * tension) * awake * (1 + 0.6 * joy);
 
     // 3D features: find where each one meets the body surface (march along the face direction), then place it there.
     const S = u.uFaceS.value, faceUnsq = this._t.d.copy(tmp);
@@ -612,10 +652,34 @@ export class JelloBlob {
     u.uHiRad.value = Math.max(1e-4, 0.017 * S * smooth(0.45, 0.75, eyeOpen));
     const smile = u.uSmile.value;
     for (let i = 0; i < 5; i++) {
-      const x = lerp(-0.065, 0.065, i / 4);
-      onSurface(x, -0.12 - smile * 0.035 * (1 - (x / 0.065) ** 2), u.uMouth.value[i]);
+      const xn = i / 2 - 1;   // -1..1 across the mouth; joy widens it
+      onSurface(0.065 * xn * (1 + 0.4 * joy), -0.12 - smile * 0.035 * (1 - xn * xn), u.uMouth.value[i]);
     }
     u.uMouthR.value = 0.009 * S;
+
+    // ---- rewards: sprouts on the crown (joy), a sweat drop running down the side of the face (distress) ----
+    if (h) {
+      const crown = this._t.f.copy(N[SEGS].x);
+      for (let i = 0; i < this.sprouts.length; i++) {
+        const g = this.sprouts[i], grow = smooth([0, 0.45, 0.75][i], [0.15, 0.6, 0.9][i], joy) * [1, 0.8, 0.7][i];
+        g.visible = grow > 0.01;
+        if (!g.visible) continue;
+        const a = [0, -0.55, 0.6][i] + 0.12 * Math.sin(time * 1.9 + i * 2);   // spread over the crown, swaying
+        const d = dir.copy(topDir).applyAxisAngle(F, a).normalize();
+        toWorld(tmp.copy(crown).addScaledVector(d, rad[SEGS] * 0.9), g.position);
+        g.quaternion.setFromUnitVectors(Y, d);
+        g.scale.setScalar(1.7 * grow * faceRad / 0.55);   // big enough to read in the small floating window
+      }
+      const sw = this.sweat;
+      sw.visible = distress > 0.02;
+      if (sw.visible) {
+        const p = (time % 2.4) / 2.4;   // forms, runs down, fades; again
+        onSurface(0.36, 0.32 - 0.4 * p, sw.position).addScaledVector(F, 0.05 * S);
+        sw.quaternion.setFromUnitVectors(Y, U);
+        sw.scale.setScalar(0.2 * S * (0.5 + 0.5 * distress) * smooth(0, 0.15, p));
+        sw.material.opacity = 0.9 * (1 - smooth(0.75, 1, p));
+      }
+    }
 
     // ---- soft shadows on the floor below (bigger and fainter the higher it floats) ----
     let cx = 0, cz = 0, lowest = Infinity;
@@ -631,7 +695,7 @@ export class JelloBlob {
       m.material.opacity = 0.35 * smooth(0.5, 1, det) * Math.exp(-p.y * 1.2);
     }
 
-    Object.assign(this.values, { wilt, tension, R, L });
+    Object.assign(this.values, { wilt, tension, R, L, joy, distress });
   }
 
   dispose() {

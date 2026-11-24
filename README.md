@@ -40,6 +40,23 @@ URL options: `?visual=ema-liquid|ema-contour|ema-dandelion|ema-branching|blob`, 
 `?mainfps=30` (this window's frame rate while streaming), `?flip=none|v|h|both` (stream orientation), `?zoom=1.5` (a fixed framing for the external screen instead of the automatic one).
 `bench.html` benchmarks the three models on the test photos.
 
+## Companion (floating blob)
+
+https://posture-buddy.pages.dev/chrome (locally `chrome.html`) keeps the jello blob in a small window that stays above
+every other app while you work (Chrome's Document Picture-in-Picture, Chrome or Edge 116+), with the posture score under
+it. Drag it by its title bar; keep the companion tab open (it runs the camera). **Start camera → Calibrate → participant
+ID → Active/Passive → Start session**; the blob floats as the session starts.
+
+- **Active:** the blob mirrors posture. A score above 90 for 5 minutes makes it happier (bigger smile, hops, leaf
+  sprouts, growing until 15 minutes); below 75 for 5 minutes makes it distressed (frown, shiver, sweat). A dip of up to
+  20 s doesn't break a run. **Passive:** the blob is alive but doesn't react, and no score is shown.
+- **Movement breaks** every N minutes (25 by default, 0 = off): the blob circles and asks to move. **Start break**
+  counts down 30 seconds while the blob circles along; or **Snooze** (5 min). A break is asked for at most 3 times, the
+  third offering **Skip**.
+- Each session saves `companion_<date-time>_<mode>.jsonl` to the participant's study files: events (breaks, rewards,
+  recalibration) and one row a second with the study fields and the live score. It isn't on the dashboard yet.
+- Testing: `?src=front-man&autocal=1` (test photo), `?rewardmin=0.2&snoozemin=0.2&breaksec=5` (short timings), `?save=local`.
+
 ## Hosted version
 
 https://posture-buddy.pages.dev (Cloudflare Pages, free plan) runs the visuals, live posture tracking and study sessions

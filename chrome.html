@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Posture Buddy · Companion</title>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+} }
+</script>
+<style>
+  :root { --bg: #12171c; --panel: #1a2128; --line: #2a333c; --text: #dde3e8; --dim: #8b97a3; --good: #6fd39a; --warn: #f0c060; --bad: #f07a6a; --accent: #2f6b4f; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font: 14px/1.4 -apple-system, system-ui, sans-serif; }
+  body { display: grid; place-items: center; padding: 24px 16px; }
+  main { width: 100%; max-width: 340px; display: grid; gap: 14px; }
+  h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .01em; }
+  h1 span { color: var(--dim); font-weight: 400; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; gap: 12px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > * { flex: 1; }
+  button { background: #26303a; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: #3d8a66; font-weight: 600; }
+  button.stop { background: #4a2a2a; border-color: #6b3a3a; }
+  label { color: var(--dim); font-size: 12px; display: grid; gap: 4px; }
+  input[type=text], input[type=number], input[type=password] { background: #0e1317; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; width: 100%; }
+  input:disabled { opacity: .6; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg label { flex: 1; text-align: center; padding: 8px 0; cursor: pointer; color: var(--dim); font-size: 14px; display: block; }
+  .seg input:checked + label { background: #26303a; color: var(--text); }
+  .seg input:disabled + label { cursor: default; }
+  .cam { position: relative; aspect-ratio: 4/3; background: #000; border-radius: 8px; overflow: hidden; display: none; }
+  .cam.on { display: block; }
+  .cam video, .cam canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform: scaleX(-1); }
+  #status { color: var(--dim); font-size: 12px; min-height: 17px; }
+  #status.error { color: var(--bad); }
+  #home { display: grid; justify-items: center; gap: 4px; }
+  #home:empty { display: none; }
+  .foot { color: var(--dim); font-size: 11px; text-align: center; }
+  .foot a { color: var(--dim); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Posture Buddy <span>· companion</span></h1>
+  <div class="card">
+    <div class="cam" id="cam"><video id="video" playsinline muted></video><canvas id="overlay"></canvas></div>
+    <div class="row">
+      <button id="startBtn" disabled>Start camera</button>
+      <button id="calBtn" disabled>Calibrate</button>
+    </div>
+    <label>Participant ID <input type="text" id="pid" placeholder="P01" spellcheck="false" autocomplete="off"></label>
+    <div class="seg" role="radiogroup" aria-label="Mode">
+      <input type="radio" name="mode" id="modeActive" value="active" checked><label for="modeActive">Active</label>
+      <input type="radio" name="mode" id="modePassive" value="passive"><label for="modePassive">Passive</label>
+    </div>
+    <label>Movement break every (minutes, 0 = off) <input type="number" id="breakMin" min="0" max="240" step="1" value="25"></label>
+    <input type="password" id="studyKey" placeholder="study key" autocomplete="off" spellcheck="false" hidden>
+    <button id="sessionBtn" class="primary" disabled>Start session</button>
+    <div id="status" role="status"></div>
+  </div>
+  <div id="home"></div>
+  <div class="foot">The blob floats above your other windows. Keep this tab open. Chrome or Edge.<br><a href="./">Full app</a></div>
+</main>
+<script type="module" src="src/companion.js"></script>
+</body>
+</html>
