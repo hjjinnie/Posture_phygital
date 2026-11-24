@@ -1,7 +1,9 @@
-import { normalizeKey, KEY_STORE, takeKeyFromLink, copyShareLink } from "./study.js";
+import { normalizeKey, KEY_STORE, takeKeyFromLink, copyShareLink, parseLog, summarizeCompanion, companionSummaryFile } from "./study.js";
 // Posture study dashboard (dashboard.html): every participant's sessions, read from the study data API
 // (functions/api/data) with the study key. Scores are the study model's held posture score (0-100, 100 = the
 // participant's calibrated posture), from each session's summary.json and scored CSV.
+// Companion sessions (chrome.html) are listed separately, from each one's .summary.json (or, for a recording without one,
+// summarized here from the recording).
 const q = new URLSearchParams(location.search);
 const LOCAL = ["localhost", "127.0.0.1", "[::1]", "::1"].includes(location.hostname);
 const API = q.has("api") ? q.get("api") : LOCAL ? "https://posture-buddy.pages.dev" : "";
@@ -31,7 +33,7 @@ async function api(path, as = "json") {
 async function loadAll() {
   const list = await api("");
   const people = await Promise.all(list.map(async ({ participant }) => {
-    const [info, summary] = await Promise.all([api(`${participant}/participant.json`), api(`${participant}/summary.json`)]);
+    const [info, summary, files] = await Promise.all([api(`${participant}/participant.json`), api(`${participant}/summary.json`), api(`${participant}/`)]);
     const sessions = {};
     for (const [n, s] of Object.entries(summary?.sessions ?? {})) {
       sessions[s.condition] = {
@@ -42,9 +44,22 @@ async function loadAll() {
         cameraCheck: s.cameraCheck, note: s.note, calibratedFrom: s.calibratedFrom,
       };
     }
-    return { pid: participant, order: info?.order ?? "?", sessions };
+    return { pid: participant, order: info?.order ?? "?", sessions, companion: await companionSessions(participant, files ?? []) };
   }));
   return people.sort((a, b) => a.pid.localeCompare(b.pid, undefined, { numeric: true }));
+}
+
+// A participant's companion sessions: each recording's summary, or one made here from the recording if it has none.
+async function companionSessions(pid, files) {
+  const names = new Set(files.map(f => f.name));
+  const logs = files.filter(f => /^companion_.*\.jsonl$/.test(f.name));
+  const out = await Promise.all(logs.map(async ({ name: file, updated }) => {
+    const sum = names.has(companionSummaryFile(file)) ? await api(`${pid}/${companionSummaryFile(file)}`).catch(() => null) : null;
+    if (sum) return sum;
+    const text = await api(`${pid}/${file}`, "text").catch(() => null);
+    return text ? { ...summarizeCompanion(parseLog(text), file), updatedAt: updated } : null;   // last saved: is it still running?
+  }));
+  return out.filter(Boolean).map(s => ({ ...s, participant: pid }));
 }
 
 // ---- tooltip ----
@@ -76,8 +91,11 @@ function renderTiles(people) {
   const diff = mean(paired.map(x => x.sessions.active.score - x.sessions.passive.score));
   const scored = people.reduce((n, x) => n + Object.values(x.sessions).filter(s => s.scored).length, 0);
   const tile = (label, value, note = "") => `<div class="card tile"><div class="label">${label}</div><div class="value">${value}</div><div class="note">${note}</div></div>`;
+  const comp = people.flatMap(x => x.companion);
+  const hours = comp.reduce((n, c) => n + c.seconds, 0) / 3600;
   $("tiles").innerHTML =
     tile("Participants", people.length, `${paired.length} with both sessions scored`) +
+    tile("Companion sessions", comp.length, `${hours < 10 ? hours.toFixed(1) : Math.round(hours)} h in all`) +
     tile("Sessions scored", scored) +
     tile("Mean score, passive", score(mean(p)), `${p.length} sessions`) +
     tile("Mean score, active", score(mean(a)), `${a.length} sessions`) +
@@ -122,9 +140,10 @@ function renderDumbbell(people) {
 
 // ---- table (also the accessible view of the chart) ----
 function renderTable(people) {
-  const status = p => {
+  const status = p => study(p) + (p.companion.length ? ` · ${p.companion.length} companion session${p.companion.length > 1 ? "s" : ""}` : "");
+  const study = p => {
     const s = Object.values(p.sessions), scored = s.filter(x => x.scored);
-    if (!s.length) return "no sessions";
+    if (!s.length) return "no study sessions";
     if (scored.length === 2) return "both sessions scored";
     if (scored.length === 1) return `session ${scored[0].n} scored` + (s.length > 1 ? `; session ${s.find(x => !x.scored).n} not scored` : "");
     return `session ${s.map(x => x.n).join(", ")} recorded; not scored`;
@@ -141,6 +160,83 @@ function renderTable(people) {
         <td>${d == null ? "–" : (d >= 0 ? "+" : "−") + Math.abs(d)}</td><td class="muted">${status(p)}</td></tr>`;
     }).join("") + `</tbody>`;
   $("table").querySelectorAll("tbody tr").forEach(tr => tr.onclick = () => showDetail(people.find(p => p.pid === tr.dataset.pid)));
+}
+
+// ---- companion sessions ----
+const dur = s => { const m = Math.round(s / 60); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min`; };
+const mins = s => s ? `${Math.round(s / 60)} min` : "–";
+function renderCompanion(people) {
+  const rows = people.flatMap(p => p.companion).sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
+  if (!rows.length) { $("companionTable").innerHTML = `<tbody><tr><td class="muted" style="text-align:left">No companion sessions yet.</td></tr></tbody>`; return; }
+  $("companionTable").innerHTML = `<thead><tr><th>Participant</th><th>Started</th><th>Mode</th><th>Length</th><th>In view</th><th>Score</th>
+    <th>Good ≥ 90</th><th>Poor &lt; 75</th><th>Happy blob</th><th>Distressed blob</th><th>Reminders</th><th>Breaks taken</th><th>Snoozed</th><th>Skipped</th><th>Status</th></tr></thead><tbody>` +
+    rows.map((s, i) => {
+      const b = s.breaks || {};
+      const live = !s.ended && Date.now() - Date.parse(s.updatedAt) < 3 * 60e3;
+      return `<tr data-i="${i}"><td>${esc(s.participant)}</td><td>${s.startedAt ? new Date(s.startedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "–"}</td>
+        <td><i class="dot" style="background:${COLOR[s.mode] || "var(--text-muted)"}"></i>${esc(s.mode || "?")}</td><td>${dur(s.seconds)}</td><td>${pct(s.presentShare)}</td>
+        <td>${score(s.meanScore)}</td><td>${pct(s.goodShare)}</td><td>${pct(s.poorShare)}</td><td>${mins(s.joySeconds)}</td><td>${mins(s.distressSeconds)}</td>
+        ${s.breakEveryMin ? [b.reminders, b.done, b.snoozed, b.skipped].map(n => `<td>${n ?? 0}</td>`).join("") : `<td>off</td><td>–</td><td>–</td><td>–</td>`}
+        <td class="muted">${s.ended ? "ended" : live ? "running" : "stopped (tab closed?)"}</td></tr>`;
+    }).join("") + `</tbody>`;
+  $("companionTable").querySelectorAll("tbody tr[data-i]").forEach(tr => tr.onclick = () => {
+    $("companionTable").querySelectorAll("tbody tr").forEach(r => r.classList.toggle("sel", r === tr));
+    showCompanion(rows[+tr.dataset.i]);
+  });
+}
+
+function showCompanion(s) {
+  $("companionDetail").hidden = false;
+  $("companionTitle").textContent = `${s.participant} · ${s.mode} · ${s.startedAt ? new Date(s.startedAt).toLocaleString() : ""}`;
+  const b = s.breaks || {};
+  $("companionNote").textContent = `Score per minute (in view only; gaps: nobody in view). Dashed lines: 90 (good) and 75 (poor). ` +
+    (s.breakEveryMin ? `Breaks every ${s.breakEveryMin} min: ${b.reminders ?? 0} reminders, ${b.started ?? 0} started, ${b.done ?? 0} finished, ${b.snoozed ?? 0} snoozed, ${b.skipped ?? 0} skipped. Marks along the top: breaks taken.` : "Movement breaks were off.");
+  const box = $("companionChart");
+  box.replaceChildren();
+  const pts = (s.minutes || []).map((m, i) => ({ min: i + 0.5, v: m.score }));
+  const vals = pts.map(p => p.v).filter(v => v != null);
+  if (!vals.length) { box.innerHTML = `<p class="muted">No posture recorded in this session.</p>`; return; }
+  const step = Math.min(...vals) < 0.4 ? 0.2 : 0.1, lo = Math.min(0.5, Math.floor(Math.min(...vals) / step + 1e-9) * step), hi = 1;
+  const maxMin = Math.max(5, Math.ceil(s.seconds / 60));
+  const tick = [1, 2, 5, 10, 15, 30, 60, 120].find(t => maxMin / t <= 10);
+  const W = 1000, H = 280, L = 40, R = 70, T = 18, B = 28;
+  const X = m => L + m / maxMin * (W - L - R), Y = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Posture score per minute over the companion session" }, box);
+  for (let v = lo; v <= hi + 1e-9; v += step) {
+    el("line", { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: "var(--grid)", "stroke-width": 1 }, svg);
+    el("text", { x: L - 8, y: Y(v) + 4, "text-anchor": "end" }, svg).textContent = Math.round(v * 100);
+  }
+  for (const [v, label] of [[0.9, "good"], [0.75, "poor"]]) {
+    if (v < lo) continue;
+    el("line", { x1: L, x2: W - R, y1: Y(v), y2: Y(v), stroke: "var(--text-muted)", "stroke-width": 1, "stroke-dasharray": "4 4" }, svg);
+    el("text", { x: W - R + 8, y: Y(v) + 4 }, svg).textContent = `${Math.round(v * 100)} ${label}`;
+  }
+  for (let m = 0; m <= maxMin; m += tick) el("text", { x: X(m), y: H - 6, "text-anchor": "middle" }, svg).textContent = m < 60 || m % 60 ? `${m} min` : `${m / 60} h`;
+  // Breaks taken: a mark along the top at each start.
+  for (const e of (s.breakEvents || []).filter(e => e.name === "started"))
+    el("path", { d: `M${X(e.t / 60) - 5},${T - 12}L${X(e.t / 60) + 5},${T - 12}L${X(e.t / 60)},${T - 4}Z`, fill: "var(--text-secondary)" }, svg);
+  let d = "", pen = false;
+  for (const p of pts) { if (p.v == null) { pen = false; continue; } d += `${pen ? "L" : "M"}${X(p.min).toFixed(1)},${Y(p.v).toFixed(1)}`; pen = true; }
+  const color = COLOR[s.mode] || "var(--text-secondary)";
+  el("path", { d, fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+  if (pts.filter(p => p.v != null).length === 1) { const p = pts.find(p => p.v != null); el("circle", { cx: X(p.min), cy: Y(p.v), r: 4, fill: color }, svg); }
+  const cross = el("line", { y1: T, y2: H - B, stroke: "var(--text-muted)", "stroke-width": 1, visibility: "hidden" }, svg);
+  const mark = el("circle", { r: 5, fill: color, stroke: "var(--surface-1)", "stroke-width": 2, visibility: "hidden" }, svg);
+  const hit = el("rect", { x: L, y: T - 14, width: W - L - R, height: H - T - B + 14, fill: "transparent" }, svg);
+  const tip = tooltip(box);
+  hit.addEventListener("mousemove", e => {
+    const r = svg.getBoundingClientRect(), mx = (e.clientX - r.left) / r.width * W;
+    const i = Math.min(pts.length - 1, Math.max(0, Math.floor((mx - L) / (W - L - R) * maxMin)));
+    const p = pts[i], m = s.minutes[i];
+    cross.setAttribute("x1", X(p.min)); cross.setAttribute("x2", X(p.min)); cross.setAttribute("visibility", "visible");
+    if (p.v != null) { mark.setAttribute("cx", X(p.min)); mark.setAttribute("cy", Y(p.v)); mark.setAttribute("visibility", "visible"); } else mark.setAttribute("visibility", "hidden");
+    const ev = (s.breakEvents || []).filter(e => Math.floor(e.t / 60) === i).map(e => `break ${e.name}`);
+    const br = box.getBoundingClientRect();
+    tip.show(`<b>Minute ${i + 1}</b><br><span class="k">Score</span> ${p.v != null ? score(p.v) : "–"} · <span class="k">in view</span> ${pct(m.present)}` +
+      (ev.length ? `<br><span class="k">${esc(ev.join(", "))}</span>` : ""), e.clientX - br.left, e.clientY - br.top);
+  });
+  hit.addEventListener("mouseleave", () => { tip.hide(); cross.setAttribute("visibility", "hidden"); mark.setAttribute("visibility", "hidden"); });
+  $("companionDetail").scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 // ---- detail: one participant, any metric over time for each session ----
@@ -310,7 +406,7 @@ async function refresh() {   // works without a key when study storage is open
   $("status").textContent = "Loading…";
   try {
     const people = await loadAll();
-    renderTiles(people); renderDumbbell(people); renderTable(people);
+    renderTiles(people); renderDumbbell(people); renderTable(people); renderCompanion(people);
     $("status").textContent = `Updated ${new Date().toLocaleTimeString()}`;
   } catch (e) {
     $("status").innerHTML = `<span class="error">${esc(!key && /doesn't match/.test(e.message) ? "Enter the study key." : e.message)}</span>`;

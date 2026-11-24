@@ -17,12 +17,13 @@
 // A session saves to the participant's study files (Cloudflare, or data/ from serve.py):
 //   companion_<YYYYMMDD-HHMMSS>_<mode>.jsonl  header, events (breaks, rewards, calibration), and one row a second with
 //                                            the pipeline's study fields (as session<N>_scored.csv) plus the live score.
+//   companion_<...>.summary.json              totals and a score per minute for the dashboard, rewritten every minute.
 // URL options: ?src=front-man&autocal=1 (a test photo instead of the webcam), ?rewardmin=5, ?snoozemin=5, ?breaksec=30 (shorter,
 // to try things out), ?save=local (data/ via serve.py).
 import { PoseEngine, drawSkeleton } from "./pose.js";
 import { extractFeatures, median } from "./posture.js";
 import { PosturePipeline, SETTINGS } from "./pipeline.js";
-import { Recorder, setStorage, checkStorage } from "./study.js";
+import { Recorder, setStorage, checkStorage, summarizeCompanion, saveCompanionSummary } from "./study.js";
 import { JelloBlob } from "./blob.js";
 
 const q = new URLSearchParams(location.search);
@@ -232,7 +233,7 @@ function finishCalibration() {
     app.baseline = median(c.frames);
     newPipeline();
     $("calBtn").textContent = "Recalibrate";
-    if (session.on) session.rec.event(sessionTime(), "calibrated", { baseline: app.baseline });
+    if (session.on) logEvent("calibrated", { baseline: app.baseline });
     status(session.on ? "Recalibrated ✓" : "Calibrated ✓ Enter the participant ID and start the session.");
   }
   else if (!c.results) status("The pose model isn't running. Reload the page and try again.", true);
@@ -245,8 +246,10 @@ function newPipeline() {
   app.pipeline = new PosturePipeline(app.baseline, {
     onSecond: row => {
       if (!session.on) return;
-      session.rec.record({ ...row, t: +sessionTime().toFixed(3), mode: session.mode, live_score: run.slow == null ? "" : +(run.slow / 100).toFixed(4),
-        joy: +run.joy.toFixed(3), distress: +run.distress.toFixed(3), break: breaks.reminder?.until ? 2 : breaks.reminder ? 1 : 0 });   // 1 asking, 2 on a break
+      const r = { ...row, t: +sessionTime().toFixed(3), mode: session.mode, live_score: run.slow == null ? "" : +(run.slow / 100).toFixed(4),
+        joy: +run.joy.toFixed(3), distress: +run.distress.toFixed(3), break: breaks.reminder?.until ? 2 : breaks.reminder ? 1 : 0 };   // 1 asking, 2 on a break
+      session.log.frames.push(r);
+      session.rec.record(r);
     },
   });
 }
@@ -302,8 +305,8 @@ function updateRun(dt) {
   const rewards = session.on && session.mode === "active";
   const joy = rewards ? level(run.good) : 0, distress = rewards ? level(run.bad) : 0;
   if (session.on) {
-    if ((joy > 0) !== (run.joy > 0)) session.rec.event(sessionTime(), joy > 0 ? "good_run_reward_on" : "good_run_reward_off", { seconds: Math.round(run.good) });
-    if ((distress > 0) !== (run.distress > 0)) session.rec.event(sessionTime(), distress > 0 ? "poor_run_distress_on" : "poor_run_distress_off", { seconds: Math.round(run.bad) });
+    if ((joy > 0) !== (run.joy > 0)) logEvent(joy > 0 ? "good_run_reward_on" : "good_run_reward_off", { seconds: Math.round(run.good) });
+    if ((distress > 0) !== (run.distress > 0)) logEvent(distress > 0 ? "poor_run_distress_on" : "poor_run_distress_off", { seconds: Math.round(run.bad) });
   }
   run.joy = joy; run.distress = distress;
 }
@@ -314,24 +317,24 @@ function checkBreak() {
   if (!session.on || !breaks.every || breaks.reminder || Date.now() < breaks.next) return;
   breaks.reminder = { n: breaks.count, at: Date.now() };
   const w = pip ?? window;   // the size of the window showing the blob, to check the prompt fits
-  session.rec.event(sessionTime(), "break_reminder", { reminder: breaks.count, window: `${w.innerWidth}x${w.innerHeight}`, floating: !!pip });
+  logEvent("break_reminder", { reminder: breaks.count, window: `${w.innerWidth}x${w.innerHeight}`, floating: !!pip });
   pip?.focus?.();
 }
 function startBreak() {
   const r = breaks.reminder;
   if (!r || r.until) return;
   r.until = Date.now() + BREAK_S * 1000;
-  session.rec.event(sessionTime(), "break_started", { reminder: r.n, seconds: BREAK_S });
+  logEvent("break_started", { reminder: r.n, seconds: BREAK_S });
 }
 function snooze() {
-  session.rec.event(sessionTime(), "break_snoozed", { reminder: breaks.reminder.n });
+  logEvent("break_snoozed", { reminder: breaks.reminder.n });
   breaks.count = breaks.reminder.n + 1;
   breaks.reminder = null;
   breaks.next = Date.now() + SNOOZE_S * 1000;
 }
 function endBreak(how) {
   if (!breaks.reminder) return;
-  session.rec.event(sessionTime(), `break_${how}`, { reminder: breaks.reminder.n });
+  logEvent(`break_${how}`, { reminder: breaks.reminder.n });
   breaks.reminder = null;
   if (how === "done") breaks.praiseUntil = Date.now() + 3000;
   breaks.count = 1;
@@ -340,6 +343,16 @@ function endBreak(how) {
 
 // ---- session ----
 const sessionTime = () => (performance.now() - session.t0) / 1000;
+// Everything recorded is also kept here (a few MB for a working day), for the dashboard summary.
+function logEvent(name, extra = {}) {
+  const t = sessionTime();
+  session.log.events.push({ t, name, ...extra });
+  session.rec.event(t, name, extra);
+}
+function saveSummary() {
+  session.lastSummary = performance.now();
+  return saveCompanionSummary(session.pid, session.file, summarizeCompanion(session.log, session.file)).catch(e => console.warn("summary not saved:", e.message));
+}
 const stamp = () => new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
 async function startSession() {
   const pid = $("pid").value.trim(), every = Math.max(0, +$("breakMin").value || 0);
@@ -356,10 +369,12 @@ async function startSession() {
   }
   Object.assign(session, { on: true, pid, mode: mode(), t0: performance.now(), file: `companion_${stamp()}_${mode()}.jsonl` });
   session.rec = new Recorder(pid, session.file);
+  const header = { participant: pid, page: "companion", mode: session.mode, startedAt: new Date().toISOString(),
+    breakEveryMin: every, snoozeMin: SNOOZE_S / 60, maxReminders: MAX_REMINDERS, goodAbove: GOOD, poorBelow: BAD, rewardAfterS: REWARD_S,
+    W: overlay.width, H: overlay.height, source: app.srcName, model: engine.model, baseline: app.baseline, settings: SETTINGS };
+  session.log = { header, events: [], frames: [] };
   try {
-    await session.rec.open({ participant: pid, page: "companion", mode: session.mode, startedAt: new Date().toISOString(),
-      breakEveryMin: every, snoozeMin: SNOOZE_S / 60, maxReminders: MAX_REMINDERS, goodAbove: GOOD, poorBelow: BAD, rewardAfterS: REWARD_S,
-      W: overlay.width, H: overlay.height, source: app.srcName, model: engine.model, baseline: app.baseline, settings: SETTINGS });
+    await session.rec.open(header);
   } catch (e) {
     session.on = false; await floating; closeFloat();
     return status(`Can't save study data (${e.message}).`, true);
@@ -368,20 +383,21 @@ async function startSession() {
   Object.assign(run, { good: 0, bad: 0, offGood: 0, offBad: 0, joy: 0, distress: 0 });
   newPipeline();
   store("study.pid", pid); store("companion.breakMin", every);
-  session.rec.event(0, "session_start", { mode: session.mode });
+  logEvent("session_start", { mode: session.mode });
+  saveSummary();
   await floating;
   status(`Session running · ${session.mode} · saving to ${session.pid}/${session.file}`);
   controls();
 }
 async function endSession() {
   if (!session.on) return;
-  session.rec.event(sessionTime(), "session_end", {});
+  logEvent("session_end");
   session.on = false;
   breaks.reminder = null;
   run.joy = run.distress = 0;
   controls();
   status("Saving…");
-  try { await session.rec.close(); status(`Session saved: ${session.pid}/${session.file}`); }
+  try { await session.rec.close(); await saveSummary(); status(`Session saved: ${session.pid}/${session.file}`); }
   catch (e) { status(`Saving failed: ${e.message}`, true); }
   closeFloat();
 }
@@ -401,6 +417,7 @@ ticker.onmessage = () => {
   const now = performance.now();
   if (app.source && engine.ready && now - lastInfer >= 1000 / INFER_HZ - 5) infer();
   checkBreak();
+  if (session.on && now - session.lastSummary >= 60e3) saveSummary();
 };
 
 // ---- storage: Cloudflare by default (the hosted site's own API; from this Mac, the hosted one), or data/ via serve.py ----

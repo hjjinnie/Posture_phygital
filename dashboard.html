@@ -72,6 +72,8 @@
   .sessions { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
   .sessions .card h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
   .sessions .card h3 i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  td .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  #companionDetail[hidden] { display: none !important; }
   .kv { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 13px; font-variant-numeric: tabular-nums; }
   .kv span:nth-child(odd) { color: var(--text-secondary); }
   @media (max-width: 560px) { .viz-root { padding: 16px; } .tile .value { font-size: 24px; } }
@@ -106,6 +108,19 @@
   <section class="card">
     <h2>Participants</h2>
     <div class="table-wrap"><table id="table"></table></div>
+  </section>
+
+  <section class="card" id="companionCard">
+    <h2>Companion sessions</h2>
+    <p class="sub">Sessions run with the floating blob (posture-buddy.pages.dev/chrome), newest first. Score: the live posture score
+      (10 s average) over the time in view, 0–100. Good ≥ 90, poor &lt; 75: the thresholds for the blob's rewards. Click a row for the
+      session over time. Updated every minute while a session runs.</p>
+    <div class="table-wrap" style="margin-top:8px"><table id="companionTable"></table></div>
+    <div id="companionDetail" hidden style="margin-top:16px; display:grid; gap:10px">
+      <h2 id="companionTitle"></h2>
+      <p class="sub" id="companionNote"></p>
+      <div class="chart" id="companionChart"></div>
+    </div>
   </section>
 
   <section id="detail" hidden>

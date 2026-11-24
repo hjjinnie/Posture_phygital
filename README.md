@@ -54,7 +54,10 @@ ID → Active/Passive → Start session**; the blob floats as the session starts
   counts down 30 seconds while the blob circles along; or **Snooze** (5 min). A break is asked for at most 3 times, the
   third offering **Skip**.
 - Each session saves `companion_<date-time>_<mode>.jsonl` to the participant's study files: events (breaks, rewards,
-  recalibration) and one row a second with the study fields and the live score. It isn't on the dashboard yet.
+  recalibration) and one row a second with the study fields and the live score, plus a `.summary.json` beside it,
+  rewritten every minute. The dashboard's **Companion sessions** section lists every session from these (length, time in
+  view, mean score, share of time ≥ 90 and < 75, minutes of happy and distressed blob, break reminders, breaks taken,
+  snoozes and skips, running or ended), and a click shows the score per minute with the breaks taken.
 - Testing: `?src=front-man&autocal=1` (test photo), `?rewardmin=0.2&snoozemin=0.2&breaksec=5` (short timings), `?save=local`.
 
 ## Hosted version

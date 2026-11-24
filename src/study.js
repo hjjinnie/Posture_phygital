@@ -139,7 +139,7 @@ export class Recorder {
 }
 
 // ---- re-scoring ----
-function parseLog(text) {
+export function parseLog(text) {
   const out = { header: null, events: [], frames: [] };
   for (const line of text.split("\n")) {
     if (!line) continue;
@@ -232,4 +232,39 @@ export const saveParticipant = (pid, data) => save(pid, "participant.json", JSON
 export async function loadParticipant(pid) {
   const r = await load(pid, "participant.json");
   return r ? r.json() : null;
+}
+
+// ---- companion sessions (chrome.html) ----
+// Each companion session's recording (companion_<date-time>_<mode>.jsonl) gets a small summary beside it
+// (companion_<date-time>_<mode>.summary.json), rewritten every minute while it runs, which the dashboard reads.
+// Score: the live posture score as a 10 s average (what the companion's rewards follow), 0-1, over time in view.
+export const companionSummaryFile = file => file.replace(/\.jsonl$/, ".summary.json");
+export const saveCompanionSummary = (pid, file, summary) => save(pid, companionSummaryFile(file), JSON.stringify(summary), "replace");
+export function summarizeCompanion({ header, events, frames }, file = "") {
+  const rows = frames.filter(r => r.status !== undefined);
+  const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+  const share = (a, f) => a.length ? a.filter(f).length / a.length : null;
+  const count = name => events.filter(e => e.name === name).length;
+  const live = rows.filter(r => r.present === 1 && r.live_score !== "" && r.live_score != null).map(r => +r.live_score);
+  const held = rows.filter(r => r.status === "held" && r.held_score !== "" && r.held_score != null).map(r => +r.held_score);
+  const minutes = [];
+  for (const r of rows) {
+    const m = minutes[Math.max(0, Math.floor((r.t - 0.001) / 60))] ??= { n: 0, present: 0, sum: 0, k: 0 };
+    m.n++;
+    if (r.present === 1) m.present++;
+    if (r.present === 1 && r.live_score !== "" && r.live_score != null) { m.sum += +r.live_score; m.k++; }
+  }
+  const seconds = Math.max(rows.at(-1)?.t ?? 0, events.at(-1)?.t ?? 0);
+  return {
+    participant: header?.participant, file, mode: header?.mode, startedAt: header?.startedAt,
+    seconds: Math.round(seconds), ended: events.some(e => e.name === "session_end"), breakEveryMin: header?.breakEveryMin ?? null,
+    presentShare: share(rows, r => r.present === 1),
+    meanScore: mean(live), goodShare: share(live, v => v >= (header?.goodAbove ?? 90) / 100), poorShare: share(live, v => v < (header?.poorBelow ?? 75) / 100),
+    meanHeldScore: mean(held),
+    joySeconds: rows.filter(r => r.joy > 0).length, distressSeconds: rows.filter(r => r.distress > 0).length,
+    breaks: { reminders: count("break_reminder"), started: count("break_started"), done: count("break_done"), snoozed: count("break_snoozed"), skipped: count("break_skipped") },
+    minutes: Array.from(minutes, m => m ? { score: m.k ? +(m.sum / m.k).toFixed(4) : null, present: +(m.present / m.n).toFixed(3) } : { score: null, present: 0 }),
+    breakEvents: events.filter(e => e.name.startsWith("break_")).map(e => ({ t: Math.round(e.t), name: e.name.slice(6) })),
+    updatedAt: new Date().toISOString(),
+  };
 }
